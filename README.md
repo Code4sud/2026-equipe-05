@@ -1,30 +1,35 @@
-# Équipe 05 — Hackathon Azuréen #3
+# Agora Roleplay Studio
 
-Projet réalisé à Nice les 18, 19 et 20 novembre 2026, sur le thème **« L'orientation et l'employabilité grâce à l'IA »**, organisé par [Code4Sud](https://code4sud.fr).
+Application Web B2B de création et de simulation de jeux de rôle (Roleplay) métiers pilotée par une architecture neuro-symbolique.
 
-## Le projet
+## ⚡ Architecture & Fonctionnement
 
-_Deux ou trois phrases : le problème, la solution, pour qui._
+- **Backend** : [`backend/main.py`](backend/main.py) (FastAPI, Pydantic v2, SDK `google-genai` avec `gemini-2.5-flash` et Structured Outputs, mode fallback simulé intégré si `GEMINI_API_KEY` est absent).
+- **Stockage** : Fichiers JSON locaux dans [`backend/data/scenarios/`](backend/data/scenarios/).
+- **Frontend** : [`frontend/`](frontend/) (React 18, Vite, TypeScript, Tailwind CSS, `lucide-react`).
+- **Principe Neuro-Symbolique** :
+  1. Le studio génère un fichier JSON de scénario.
+  2. L'Agent IA unique (`backend/agent.py`) analyse l'historique et l'état des jauges, puis renvoie une structure validée (`AgentTurnResponse`).
+  3. Le moteur (`backend/engine.py`) applique mathématiquement les variations (`deltas`) et vérifie les conditions de victoire/défaite ou d'échec critique (tolérance zéro pour les propos déplacés).
 
-## Lancer le projet
+---
 
+## 🚀 Instructions de Lancement
+
+Ouvrez **deux terminaux séparés** :
+
+### 1. Lancer le Backend Python (FastAPI)
 ```bash
-# Comment installer et démarrer, en 5 lignes maximum
+cd backend
+pip install -r requirements.txt
+python main.py
 ```
+*(Le serveur FastAPI écoutera sur `http://localhost:8000`)*
 
-## Publier sur le site du hackathon
-
-1. Complétez `projet.json` (nom, pitch, description, écoles, technologies, liens).
-2. Ajoutez vos captures dans `captures/` et listez-les dans `projet.json`.
-3. Poussez sur `main` : votre fiche apparaît sur https://orientation.code4sud.fr/projets/equipe-05 en moins d'une minute.
-
-Toute la doc : https://orientation.code4sud.fr/doc/
-
-## Démo en ligne
-
-Si votre projet est un site sans serveur, il est publié automatiquement sur GitHub Pages à chaque push :
-`https://code4sud.github.io/2026-equipe-05/`. Reportez cette adresse dans le champ `demo` de `projet.json`.
-
-## Licence
-
-MIT — voir `LICENSE`.
+### 2. Lancer le Frontend React (Vite)
+```bash
+cd frontend
+npm install
+npm run dev
+```
+*(L'application Web s'ouvrira sur `http://localhost:3000` avec proxy configuré vers le backend)*

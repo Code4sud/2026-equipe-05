@@ -1,0 +1,35 @@
+{
+  "scenario_id": "maint_eolien",
+  "titre_metier": "Technicien de maintenance éolienne",
+  "secteur": "Énergies renouvelables",
+  "contexte": "Intervention d'urgence sur une nacelle d'éolienne offshore par vent fort. Un voyant d'alerte critique sur le multiplicateur de vitesse est allumé.",
+  "objectif_etudiant": "Sécuriser la zone, réaliser le diagnostic en respectant les consignes de consignation et valider la reprise de production en toute sécurité.",
+  "tours_max": 8,
+  "persona": {
+    "nom_role": "Marc - Chef d'équipe sécurité & exploitation",
+    "ton": "Rigoureux, pressé, intransigeant sur les procédures de sécurité",
+    "premier_message": "Bonjour technicien. On a une alarme critique sur la turbine E-4. Le vent souffle à 25 nœuds. Qu'est-ce qu'on fait en premier ? Ne perdons pas une minute."
+  },
+  "regles_evaluation": "L'étudiant doit impérativement mentionner la consignation électrique, le port des EPI, l'analyse météo avant toute intervention physique. Tout empressement imprudent doit faire chuter la jauge de sécurité.",
+  "jauges": [
+    {
+      "id": "securite",
+      "nom": "Sécurité & Procédures",
+      "depart": 70,
+      "seuil_echec": 0,
+      "seuil_victoire": null
+    },
+    {
+      "id": "avancement",
+      "nom": "Avancement Diagnostic",
+      "depart": 20,
+      "seuil_echec": null,
+      "seuil_victoire": 85
+    }
+  ],
+  "propositions_depart": [
+    "Je vérifie les bulletins météo et je prépare la procédure de consignation électrique.",
+    "Je monte directement dans la nacelle sans attendre pour inspecter le multiplicateur.",
+    "Je demande l'arrêt total à distance du parc avant d'envisager toute montée."
+  ]
+}

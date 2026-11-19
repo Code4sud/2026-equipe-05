@@ -62,7 +62,7 @@ def test_compiler_direct():
     print(f"Nombre de règles de sécurité actives : {len(compiled_config.regles_securite_actives)}")
     print(f"Résumé de la grille de notation : {compiled_config.grille_notation_resume}")
     print("\n--- SYSTEM PROMPT AGENT 2 GÉNÉRÉ ---")
-    print(compiled_config.system_prompt_agent_2)
+    print(compiled_config.system_prompt_agent_2.encode('ascii', errors='replace').decode('ascii'))
     print("---------------------------------------")
     
     assert compiled_config.system_prompt_agent_2 is not None

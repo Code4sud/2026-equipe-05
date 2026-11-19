@@ -135,19 +135,32 @@ export const GameStage: React.FC<GameStageProps> = ({ session, latestTurn, onSen
         <div className="lg:col-span-3 flex flex-col justify-center items-center space-y-6 relative">
           
           {/* Pedagogical Explanation Box (if available) */}
-<div>
+<div className="max-w-xl w-full">
           {latestTurn?.explication_pedagogique && (
-            <div className="max-w-xl w-full bg-indigo-950/40 border border-indigo-500/30 p-4 rounded-2xl shadow-xl backdrop-blur-md flex items-start gap-3">
+            <div className="w-full bg-indigo-950/40 border border-indigo-500/30 p-4 rounded-2xl shadow-xl backdrop-blur-md flex items-start gap-3">
               <div className="p-2 bg-indigo-500/20 rounded-xl text-indigo-400 mt-0.5">
                 <HelpCircle className="w-4 h-4" />
               </div>
-              <div>
+              <div className="flex-1 min-w-0">
                 <span className="text-[11px] font-bold text-indigo-400 uppercase tracking-wider block mb-0.5">
                   Analyse Pédagogique
                 </span>
                 <p className="text-xs text-slate-300 leading-relaxed">
                   {latestTurn.explication_pedagogique}
                 </p>
+                {latestTurn.erreur_api && (
+                  <div className="mt-3 p-3 bg-rose-950/80 border border-rose-500/40 rounded-xl text-xs text-rose-300 flex items-start gap-2.5 shadow-lg">
+                    <AlertTriangle className="w-4 h-4 text-rose-400 flex-shrink-0 mt-0.5" />
+                    <div className="flex-1 min-w-0">
+                      <span className="font-semibold text-rose-300 text-[11px] uppercase tracking-wider block mb-1">
+                        Erreur détaillée de communication avec l'API IA (Groq) :
+                      </span>
+                      <div className="font-mono text-[11px] text-rose-200/90 break-words whitespace-pre-wrap bg-slate-950/90 p-2.5 rounded-lg border border-rose-900/60 select-text max-h-48 overflow-y-auto leading-relaxed">
+                        {latestTurn.erreur_api}
+                      </div>
+                    </div>
+                  </div>
+                )}
               </div>
             </div>
           )}

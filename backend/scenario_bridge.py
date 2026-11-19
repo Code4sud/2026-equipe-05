@@ -50,16 +50,28 @@ def ensure_compiled(scenario: Scenario, force: bool = False) -> bool:
     """Compile le scénario avec l'Agent 1 s'il ne l'est pas déjà.
     Ne lève jamais d'exception : en cas d'échec, agent.py utilise son prompt de secours."""
     path = COMPILED_DIR / f"{scenario.scenario_id}.json"
-    if path.exists() and not force:
+    scenario_file_path = SCENARIOS_DIR / f"{scenario.scenario_id}.json"
+
+    if scenario.system_prompt_agent_2 and path.exists() and not force:
         return True
+
     try:
         form = scenario_to_raw_form(scenario)
         compiled = compile_scenario_for_agent2(form)
+        if compiled and compiled.get("system_prompt_agent_2"):
+            scenario.system_prompt_agent_2 = compiled.get("system_prompt_agent_2")
+
         result = CompiledScenarioResponse(
             scenario_id=scenario.scenario_id, form=form, compiled=compiled
         )
         with open(path, "w", encoding="utf-8") as f:
             json.dump(result.model_dump(), f, ensure_ascii=False, indent=2)
+
+        # Mettre à jour le fichier scénario avec system_prompt_agent_2
+        if scenario_file_path.exists():
+            with open(scenario_file_path, "w", encoding="utf-8") as f:
+                json.dump(scenario.model_dump(), f, ensure_ascii=False, indent=2)
+
         return True
     except Exception as e:
         print(f"scenario_bridge: compilation impossible pour {scenario.scenario_id} : {e}")

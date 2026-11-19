@@ -23,6 +23,7 @@ export interface Scenario {
   regles_evaluation: string;
   jauges: GaugeConfig[];
   propositions_depart: string[];
+  system_prompt_agent_2?: string;
 }
 
 export interface AgentTurnResponse {
@@ -32,6 +33,7 @@ export interface AgentTurnResponse {
   explication_pedagogique: string;
   echec_critique: boolean;
   propositions_suivantes: string[];
+  erreur_api?: string | null;
 }
 
 export interface SessionState {

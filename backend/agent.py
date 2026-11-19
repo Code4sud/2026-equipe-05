@@ -1,19 +1,29 @@
 import os
 import json
+import concurrent.futures
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from dotenv import load_dotenv
 from models import Scenario, AgentTurnResponse
 
+ROOT_DIR = Path(__file__).resolve().parent.parent
+load_dotenv(ROOT_DIR / ".env")
+load_dotenv(Path(__file__).resolve().parent / ".env")
 load_dotenv()
 
 try:
-    from google import genai
-    from google.genai import types
-    HAS_GENAI = True
+    from openai import OpenAI
+    HAS_OPENAI = True
 except ImportError:
-    HAS_GENAI = False
+    HAS_OPENAI = False
+
+GROQ_BASE_URL = "https://api.groq.com/openai/v1"
+GROQ_MODELS = [
+    "openai/gpt-oss-120b",
+    "openai/gpt-oss-20b",
+    "qwen/qwen3.8-27b",
+]
 
 COMPILED_DIR = Path(__file__).parent / "data" / "compiled_scenarios"
 
@@ -72,6 +82,9 @@ def find_compiled(scenario: Scenario) -> Optional[dict]:
 
 
 def build_base_prompt(scenario: Scenario) -> str:
+    if scenario.system_prompt_agent_2:
+        return scenario.system_prompt_agent_2.strip()
+
     compiled = find_compiled(scenario)
     if compiled:
         parts = [compiled["system_prompt_agent_2"].strip()]
@@ -96,13 +109,29 @@ def build_base_prompt(scenario: Scenario) -> str:
 
 class OmniscientAgent:
     def __init__(self):
-        self.api_key = os.getenv("GEMINI_API_KEY")
+        self.api_key = None
         self.client = None
-        if HAS_GENAI and self.api_key and self.api_key != "your_gemini_api_key_here":
-            try:
-                self.client = genai.Client(api_key=self.api_key)
-            except Exception as e:
-                print(f"Failed to initialize GenAI client: {e}")
+        self.init_error = None
+        self._init_client()
+
+    def _init_client(self):
+        self.api_key = os.getenv("GROQ_API_KEY") or os.getenv("GROK_API_KEY")
+        self.client = None
+        self.init_error = None
+        if not HAS_OPENAI:
+            self.init_error = "Bibliothèque 'openai' non installée (pip install openai)."
+            return
+        if not self.api_key or self.api_key in ("your_groq_api_key_here", "your_grok_api_key_here"):
+            self.init_error = "Clé GROQ_API_KEY non configurée dans le fichier .env."
+            return
+        try:
+            self.client = OpenAI(
+                api_key=self.api_key,
+                base_url=GROQ_BASE_URL,
+            )
+        except Exception as e:
+            self.init_error = f"Échec de l'initialisation du client Groq : {str(e).strip()}"
+            print(f"Failed to initialize Groq client: {e}")
 
     def call_agent(
         self,
@@ -121,6 +150,7 @@ class OmniscientAgent:
             + "\nÉtat actuel des jauges : "
             + json.dumps(gauges_actuelles, ensure_ascii=False)
             + f"\nTour {tour} sur {scenario.tours_max}."
+            + "\n\nRéponds UNIQUEMENT avec un objet JSON valide sans balises markdown ni texte autour."
         )
 
         messages_prompt = "Historique de conversation :\n"
@@ -128,47 +158,74 @@ class OmniscientAgent:
             messages_prompt += f"- {h['role'].upper()}: {h['content']}\n"
         messages_prompt += f"- ETUDIANT (dernier message) : {student_message}\n"
 
+        if not self.client:
+            self._init_client()
+
+        api_error_detail: Optional[str] = None
+        if self.init_error and not self.client:
+            api_error_detail = self.init_error
+
         if self.client:
-            models_to_try = ["gemini-2.5-flash", "gemini-2.5-flash", "gemini-1.5-flash", "gemini-2.0-flash", "gemini-3.8-flash"]
-            for _ in range(2):  # 1 nouvel essai si la réponse est invalide
-                for m in models_to_try:
-                    try:
-                        response = self.client.models.generate_content(
-                            model=m,
-                            contents=messages_prompt,
-                            config=types.GenerateContentConfig(
-                                system_instruction=system_prompt,
-                                response_mime_type="application/json",
-                                temperature=0.7,
-                            ),
+            model_errors: List[str] = []
+            for m in GROQ_MODELS:
+                try:
+                    def _run(model=m):
+                        return self.client.chat.completions.create(
+                            model=model,
+                            messages=[
+                                {"role": "system", "content": system_prompt},
+                                {"role": "user", "content": messages_prompt},
+                            ],
+                            temperature=0.7,
+                            response_format={"type": "json_object"},
                         )
-                        text = response.text.strip()
-                        if text.startswith("```json"):
-                            text = text[7:]
-                        if text.startswith("```"):
-                            text = text[3:]
-                        if text.endswith("```"):
-                            text = text[:-3]
-                        text = text.strip()
 
-                        resp = AgentTurnResponse(**json.loads(text))
-                        resp.deltas_jauges = {
-                            k: max(-20, min(20, v))
-                            for k, v in resp.deltas_jauges.items()
-                            if k in ids
-                        }
-                        resp.propositions_suivantes = (
-                            resp.propositions_suivantes + [""] * 3
-                        )[:3]
-                        return resp
-                    except Exception as e:
-                        continue
-                    print(f"Gemini API error: {e}")
+                    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+                        future = executor.submit(_run)
+                        response = future.result(timeout=30)
 
-        return self._simulate_fallback(scenario, gauges_actuelles, student_message)
+                    text = response.choices[0].message.content.strip()
+                    if text.startswith("```json"):
+                        text = text[7:]
+                    if text.startswith("```"):
+                        text = text[3:]
+                    if text.endswith("```"):
+                        text = text[:-3]
+                    text = text.strip()
+
+                    resp = AgentTurnResponse(**json.loads(text))
+                    resp.deltas_jauges = {
+                        k: max(-20, min(20, v))
+                        for k, v in resp.deltas_jauges.items()
+                        if k in ids
+                    }
+                    resp.propositions_suivantes = (
+                        resp.propositions_suivantes + [""] * 3
+                    )[:3]
+                    resp.erreur_api = None
+                    return resp
+                except Exception as e:
+                    err_msg = str(e).strip() or repr(e)
+                    print(f"Groq API error with model {m}: {err_msg}")
+                    model_errors.append(f"[{m}] {err_msg}")
+                    continue
+
+            if model_errors:
+                api_error_detail = "\n".join(model_errors)
+
+        return self._simulate_fallback(
+            scenario,
+            gauges_actuelles,
+            student_message,
+            erreur_api=api_error_detail,
+        )
 
     def _simulate_fallback(
-        self, scenario: Scenario, gauges_actuelles: Dict[str, int], student_message: str
+        self,
+        scenario: Scenario,
+        gauges_actuelles: Dict[str, int],
+        student_message: str,
+        erreur_api: Optional[str] = None,
     ) -> AgentTurnResponse:
         msg_lower = student_message.lower()
         insults = ["idiot", "ferme", "nul", "merde", "connard", "gueule", "degage"]
@@ -186,6 +243,7 @@ class OmniscientAgent:
                     "Je reprends calmement",
                     "Je quitte la simulation",
                 ],
+                erreur_api=erreur_api,
             )
 
         positive_keywords = [
@@ -202,13 +260,14 @@ class OmniscientAgent:
             ),
             humeur_avatar="happy" if score_boost > 0 else "neutral",
             deltas_jauges=deltas,
-            explication_pedagogique="Évaluation simulée (mode fallback activé - configurez GEMINI_API_KEY pour l'IA réelle).",
+            explication_pedagogique="Évaluation simulée (mode fallback activé - configurez GROQ_API_KEY pour l'IA réelle).",
             echec_critique=False,
             propositions_suivantes=[
                 "Proposer une vérification technique approfondie",
                 "Demander un délai supplémentaire pour analyse",
                 "Appliquer immédiatement la consigne standard",
             ],
+            erreur_api=erreur_api,
         )
 
 

@@ -29,7 +29,7 @@ export const HomeCatalog: React.FC<HomeCatalogProps> = ({ scenarios, onSelectSce
                 <Cpu className="w-3.5 h-3.5" /> Architecture Neuro-Symbolique
               </span>
               <span className="px-3 py-1 bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 rounded-full text-xs font-semibold flex items-center gap-1.5">
-                <Sparkles className="w-3.5 h-3.5" /> Gemini 2.5 Flash
+                <Sparkles className="w-3.5 h-3.5" /> Groq (LPU)
               </span>
             </div>
             <h1 className="text-3xl md:text-4xl font-extrabold tracking-tight text-white mb-2">

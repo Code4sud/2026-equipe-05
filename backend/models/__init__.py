@@ -22,9 +22,10 @@ class Scenario(BaseModel):
     objectif_etudiant: str
     tours_max: int = 10
     persona: PersonaConfig
-    regles_evaluation: str
+    regles_evaluation: Optional[str] = ""
     jauges: List[GaugeConfig]
     propositions_depart: List[str]
+    system_prompt_agent_2: Optional[str] = None
 
 class AgentTurnResponse(BaseModel):
     replique_bulle: str = Field(..., description="La réplique prononcée par l'avatar dans sa bulle de dialogue.")
@@ -33,6 +34,7 @@ class AgentTurnResponse(BaseModel):
     explication_pedagogique: str = Field(..., description="Encart explicatif pédagogique de l'impact de la réponse.")
     echec_critique: bool = Field(..., description="True si l'étudiant a tenu des propos déplacés, insultants ou dangereux entraînant un arrêt immédiat.")
     propositions_suivantes: List[str] = Field(..., description="3 suggestions de réponses contextuelles pour le tour suivant.")
+    erreur_api: Optional[str] = Field(default=None, description="Message d'erreur détaillé en cas d'échec de communication avec l'API IA.")
 
 class ScenarioCreateRequest(BaseModel):
     scenario_id: Optional[str] = None
@@ -42,9 +44,10 @@ class ScenarioCreateRequest(BaseModel):
     objectif_etudiant: str
     tours_max: int = 10
     persona: PersonaConfig
-    regles_evaluation: str
+    regles_evaluation: Optional[str] = ""
     jauges: List[GaugeConfig]
     propositions_depart: List[str]
+    system_prompt_agent_2: Optional[str] = None
 
 class TurnRequest(BaseModel):
     message: str

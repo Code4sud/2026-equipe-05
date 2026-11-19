@@ -357,7 +357,7 @@ export const ScenarioStudio: React.FC<ScenarioStudioProps> = ({ onScenarioCreate
               disabled={loading}
               className="flex items-center gap-2 px-6 py-2.5 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white font-medium rounded-xl text-sm shadow-lg shadow-emerald-600/20 transition-all"
             >
-              <CheckCircle2 className="w-4 h-4" /> {loading ? "Création..." : "Générer et Enregistrer"}
+              <CheckCircle2 className="w-4 h-4" /> {loading ? "Compilation du scénario par l'Agent IA en cours..." : "Générer et Enregistrer"}
             </button>
           )}
         </div>

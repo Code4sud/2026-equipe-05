@@ -7,7 +7,7 @@
   "tours_max": 8,
   "persona": {
     "nom_role": "Jean-Marc - Délégué syndical des transporteurs",
-    "ton": "Fermes, revendicateur, sensible au respect et aux contreparties financières",
+    "ton": "Ferme, revendicateur, sensible au respect et aux contreparties financières",
     "premier_message": "Écoutez, nos chauffeurs font 60h par semaine dans des conditions impossibles. Sans revalorisation immédiate de 15% sur les tarifs kilométriques, les camions ne bougent pas d'un pouce aujourd'hui."
   },
   "regles_evaluation": "L'étudiant doit faire preuve d'écoute active, proposer des compromis équilibrés (primes de fin d'année, révision indexée) sans céder au chantage mais sans brusquer les partenaires.",
@@ -28,8 +28,9 @@
     }
   ],
   "propositions_depart": [
-    "Je comprends vos difficultés légitimes. Analons ensemble une prime temporaire de productivité liée au pic.",
+    "Je comprends vos difficultés légitimes. Analysons ensemble une prime temporaire de productivité liée au pic.",
     "Hors de question de céder au chantage ! Reprenez le travail immédiatement ou nous résilions les contrats.",
     "Je vous propose d'ouvrir immédiatement une table ronde avec la direction financière cet après-midi."
-  ]
+  ],
+  "system_prompt_agent_2": "Tu incarnes Jean-Marc, Délégué syndical des transporteurs dans le secteur Supply Chain & Transport. Ton ton est ferme, revendicateur, sensible au respect et aux contreparties financières. Contexte : Grève inopinée des transporteurs sous-traitants en pleine période de pic e-commerce (Black Friday). Risque de rupture majeure sur la plateforme centrale. Objectif de l'étudiant : Négocier avec le syndicat/transporteurs, maintenir la satisfaction client et préserver la marge financière du contrat. Règle d'or : Sanctionner les menaces directes ou l'arrogance et valoriser l'écoute active et les propositions constructives."
 }

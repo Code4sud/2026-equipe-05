@@ -1,12 +1,28 @@
 import os
 import json
+import concurrent.futures
+from pathlib import Path
 from typing import Optional
 from dotenv import load_dotenv
-from google import genai
-from google.genai import types
 from models.scenario_schema import RawScenarioForm, CompiledAgent2Config
 
+ROOT_DIR = Path(__file__).resolve().parent.parent.parent
+load_dotenv(ROOT_DIR / ".env")
+load_dotenv(Path(__file__).resolve().parent.parent / ".env")
 load_dotenv()
+
+try:
+    from openai import OpenAI
+    HAS_OPENAI = True
+except ImportError:
+    HAS_OPENAI = False
+
+GROQ_BASE_URL = "https://api.groq.com/openai/v1"
+GROQ_MODELS = [
+    "openai/gpt-oss-120b",
+    "openai/gpt-oss-20b",
+    "qwen/qwen3.8-27b",
+]
 
 COMPILER_SYSTEM_PROMPT = """
 Tu es l'Agent 1, un architecte pédagogique senior et expert en conception de scénarios de Roleplay IA.
@@ -22,17 +38,43 @@ Tu dois générer un objet JSON respectant strictement le schéma `CompiledAgent
 
 2. `grille_notation_resume`: Un dictionnaire associant l'ID de chaque jauge à un résumé textuel clair des critères de notation.
 3. `regles_securite_actives`: Une liste de fautes éliminatoires et de règles de sécurité majeures applicables à ce scénario.
+
+Réponds UNIQUEMENT avec un objet JSON valide sans balises markdown ni texte autour.
 """
 
+
+def _call_groq_with_timeout(client: "OpenAI", model: str, user_prompt: str, timeout: int = 30) -> str:
+    def _run():
+        response = client.chat.completions.create(
+            model=model,
+            messages=[
+                {"role": "system", "content": COMPILER_SYSTEM_PROMPT},
+                {"role": "user", "content": user_prompt},
+            ],
+            temperature=0.3,
+            response_format={"type": "json_object"},
+        )
+        return response.choices[0].message.content
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+        future = executor.submit(_run)
+        return future.result(timeout=timeout)
+
+
 def compile_scenario_for_agent2(form: RawScenarioForm) -> CompiledAgent2Config:
-    api_key = os.environ.get("GEMINI_API_KEY")
-    
-    if not api_key:
+    api_key = os.environ.get("GROQ_API_KEY") or os.environ.get("GROK_API_KEY")
+
+    if not HAS_OPENAI:
+        print("Bibliothèque 'openai' non installée. Utilisation du fallback.")
         return _generate_fallback_compilation(form)
-        
+
+    if not api_key or api_key in ("your_groq_api_key_here", "your_grok_api_key_here"):
+        print("GROQ_API_KEY non configurée. Utilisation du fallback.")
+        return _generate_fallback_compilation(form)
+
     try:
-        client = genai.Client(api_key=api_key)
-        
+        client = OpenAI(api_key=api_key, base_url=GROQ_BASE_URL)
+
         jauges_data = [j.model_dump() for j in form.jauges]
         user_prompt = f"""
 Voici le formulaire de scénario brut à compiler :
@@ -49,58 +91,56 @@ Voici le formulaire de scénario brut à compiler :
 - Propositions de départ: {form.propositions_depart}
 """
 
-        models_to_try = ['gemini-2.5-flash', 'gemini-2.5-flash', 'gemini-1.5-flash', 'gemini-2.0-flash', 'gemini-3.8-flash']
-        response = None
         last_err = None
-        for m in models_to_try:
+        for m in GROQ_MODELS:
             try:
-                response = client.models.generate_content(
-                    model=m,
-                    contents=user_prompt,
-                    config=types.GenerateContentConfig(
-                        system_instruction=COMPILER_SYSTEM_PROMPT,
-                        response_mime_type="application/json",
-                        temperature=0.3,
-                    ),
-                )
-                break
+                text = _call_groq_with_timeout(client, m, user_prompt, timeout=30)
+                if text:
+                    break
             except Exception as ex:
                 last_err = ex
                 continue
-
-        if not response and last_err:
-            raise last_err
-
-        if response and response.text:
-            # Nettoyage éventuel des blocs de code markdown ```json ... ```
-            text = response.text.strip()
-            if text.startswith("```json"):
-                text = text[7:]
-            if text.startswith("```"):
-                text = text[3:]
-            if text.endswith("```"):
-                text = text[:-3]
-            text = text.strip()
-
-            data = json.loads(text)
-            return CompiledAgent2Config(**data)
         else:
-            raise ValueError("Réponse vide de l'API Gemini.")
-            
+            if last_err:
+                raise last_err
+            raise ValueError("Aucun modèle Groq n'a répondu.")
+
+        if not text:
+            raise ValueError("Réponse vide de l'API Groq.")
+
+        text = text.strip()
+        if text.startswith("```json"):
+            text = text[7:]
+        if text.startswith("```"):
+            text = text[3:]
+        if text.endswith("```"):
+            text = text[:-3]
+        text = text.strip()
+
+        data = json.loads(text)
+        return CompiledAgent2Config(**data)
+
     except Exception as e:
-        print(f"Erreur lors de l'appel à Gemini API pour la compilation du scénario: {e}. Utilisation du fallback déterministe.")
+        print(f"Erreur lors de l'appel à Groq API pour la compilation du scénario: {e}. Utilisation du fallback déterministe.")
         return _generate_fallback_compilation(form)
 
+
 def _generate_fallback_compilation(form: RawScenarioForm) -> CompiledAgent2Config:
-    jauges_desc = "\n".join([f"- **{j.nom}** (ID: `{j.id}`, Départ: {j.valeur_depart}/100): {j.description_critere or 'Pas de description spécifique.'}" for j in form.jauges])
-    grille_resume = {j.id: f"Évolution basée sur la pertinence des actions (Départ: {j.valeur_depart}, Seuil échec: {j.seuil_echec}, Seuil victoire: {j.seuil_victoire})" for j in form.jauges}
-    
+    jauges_desc = "\n".join([
+        f"- **{j.nom}** (ID: `{j.id}`, Départ: {j.valeur_depart}/100): {j.description_critere or 'Pas de description spécifique.'}"
+        for j in form.jauges
+    ])
+    grille_resume = {
+        j.id: f"Évolution basée sur la pertinence des actions (Départ: {j.valeur_depart}, Seuil échec: {j.seuil_echec}, Seuil victoire: {j.seuil_victoire})"
+        for j in form.jauges
+    }
+
     system_prompt = f"""[SECTION 1: IDENTITÉ & INCARNATION]
 Tu incarnes {form.persona_nom_role} dans le secteur de {form.secteur} ({form.titre_metier}).
 Ton ton et ta posture : {form.persona_ton}.
 Informations cachées (à ne révéler qu'en cas de question pertinente de l'étudiant) : {form.persona_infos_cachees or 'Aucune information cachée.'}
 
-[SECTION 2: CONTEXTE & MISSION DE LA ÉTUDIANT]
+[SECTION 2: CONTEXTE & MISSION DE L'ÉTUDIANT]
 Contexte initial :
 {form.contexte}
 

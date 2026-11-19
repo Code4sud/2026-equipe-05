@@ -97,7 +97,8 @@ def start_session(scenario_id: str):
             "deltas_jauges": {g.id: 0 for g in scenario.jauges},
             "explication_pedagogique": "Début de la simulation. Analysez la situation et engagez la conversation.",
             "echec_critique": False,
-            "propositions_suivantes": scenario.propositions_depart
+            "propositions_suivantes": scenario.propositions_depart,
+            "erreur_api": None,
         }
     }
 

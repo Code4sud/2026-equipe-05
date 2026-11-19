@@ -7,7 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from models import Scenario, ScenarioCreateRequest, TurnRequest, SessionState, AgentTurnResponse
 from engine import engine_instance
-from agent import agent_instance
+from backend.dialogue_agent import agent_instance
 
 app = FastAPI(title="Agora Roleplay Studio API", version="1.0.0")
 

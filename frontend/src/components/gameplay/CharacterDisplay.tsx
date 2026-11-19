@@ -1,14 +1,14 @@
 import { useState } from "react";
 import type { Character } from "./types";
-import { COMM_STATUS, EXPRESSIONS } from "./ui";
+import { COMM_STATUS, EXPRESSIONS, LABEL, MUTED, SURFACE, SURFACE_INNER } from "./ui";
 import { useTypewriter } from "./hooks";
 
 /**
- * Affichage générique d'un interlocuteur.
+ * Affichage générique des interlocuteurs.
  *
- * Ce composant ne connaît ni métier, ni scénario, ni apparence : il affiche
- * simplement le contrat `Character` (id, name, role, avatarUrl, expression,
- * dialogue, status).
+ * Aucun de ces composants ne connaît de métier, de scénario ni d'apparence : ils
+ * affichent simplement le contrat `Character` (id, name, role, avatarUrl,
+ * expression, dialogue, status).
  *
  * FUTURE INTEGRATION IA :
  * recevoir ici les personnages générés (identité, avatar, expression, dialogue).
@@ -26,106 +26,140 @@ const NeutralAvatar = ({ seed }: { seed: string }) => {
     const hue = hueFrom(seed);
     return (
         <svg viewBox="0 0 100 100" role="img" aria-label="Portrait indisponible" className="h-full w-full">
-            <rect width="100" height="100" fill={`hsl(${hue} 22% 17%)`} />
+            <rect width="100" height="100" fill={`hsl(${hue} 18% 78%)`} />
             <circle cx="50" cy="38" r="17" fill={`hsl(${hue} 14% 46%)`} />
             <path d="M16 100 Q16 63 50 63 Q84 63 84 100 Z" fill={`hsl(${hue} 14% 38%)`} />
         </svg>
     );
 };
 
-interface CharacterDisplayProps {
-    character: Character;
-}
-
-export const CharacterDisplay = ({ character }: CharacterDisplayProps) => {
-    const [imageFailed, setImageFailed] = useState(false);
-    const speaking = character.status === "speaking";
-    const { shown, done, skip } = useTypewriter(character.dialogue, speaking);
-
+/** Portrait rond avec anneau d'expression ; bascule sur le portrait neutre si l'image échoue. */
+const Portrait = ({ character, size }: { character: Character; size: string }) => {
+    const [failed, setFailed] = useState(false);
     const expression = EXPRESSIONS[character.expression] ?? EXPRESSIONS.neutral;
-    const status = COMM_STATUS[character.status] ?? COMM_STATUS.idle;
-    const ExpressionIcon = expression.icon;
-    const showImage = !!character.avatarUrl && !imageFailed;
-
+    const showImage = !!character.avatarUrl && !failed;
     return (
-        <article
-            aria-label={`${character.name}, ${character.role}`}
-            className={`flex min-w-0 flex-col rounded-xl border p-3 transition-colors ${
-                speaking ? "border-cyan-400/50 bg-cyan-400/5" : "border-white/10 bg-[#0d1520]"
-            }`}
-        >
-            <div className="flex items-center gap-3">
-                <div className={`relative h-14 w-14 shrink-0 overflow-hidden rounded-full ring-2 ${expression.ring}`}>
-                    {showImage ? (
-                        <img
-                            src={character.avatarUrl ?? undefined}
-                            alt={`Portrait de ${character.name}`}
-                            className="h-full w-full object-cover"
-                            onError={() => setImageFailed(true)}
-                        />
-                    ) : (
-                        <NeutralAvatar seed={character.id} />
-                    )}
-                </div>
-
-                <div className="min-w-0 flex-1">
-                    <p className="truncate text-sm font-bold">{character.name}</p>
-                    <p className="truncate text-[11px] text-slate-400">{character.role}</p>
-                    <div className="mt-1 flex items-center gap-3 text-[10px] text-slate-400">
-                        <span className="flex items-center gap-1.5">
-                            <span
-                                className={`h-1.5 w-1.5 rounded-full ${status.dot} ${speaking ? "animate-pulse motion-reduce:animate-none" : ""}`}
-                            />
-                            {status.label}
-                        </span>
-                        <span className="flex items-center gap-1" title={`Expression : ${expression.label}`}>
-                            <ExpressionIcon size={12} /> {expression.label}
-                        </span>
-                    </div>
-                </div>
-            </div>
-
-            <div
-                className={`mt-3 min-h-[3.25rem] rounded-lg border p-2.5 text-xs leading-relaxed ${
-                    speaking
-                        ? "border-cyan-400/20 bg-[#0a121c] text-slate-100"
-                        : "border-white/5 bg-[#0a121c]/60 text-slate-500"
-                }`}
-            >
-                {character.dialogue ? (
-                    speaking ? (
-                        <button
-                            type="button"
-                            onClick={skip}
-                            disabled={done}
-                            className="block w-full text-left disabled:cursor-default"
-                            aria-label="Afficher la réplique en entier"
-                        >
-                            {shown}
-                            {!done && <span className="ml-0.5 inline-block h-3 w-1 animate-pulse bg-cyan-400 align-middle" />}
-                        </button>
-                    ) : (
-                        <p className="line-clamp-2">{character.dialogue}</p>
-                    )
-                ) : (
-                    <p className="italic">Pas encore de contact.</p>
-                )}
-            </div>
-        </article>
+        <div className={`relative shrink-0 overflow-hidden rounded-full ring-[3px] ${expression.ring} ${size}`}>
+            {showImage ? (
+                <img
+                    src={character.avatarUrl ?? undefined}
+                    alt={`Portrait de ${character.name}`}
+                    className="h-full w-full object-cover"
+                    onError={() => setFailed(true)}
+                />
+            ) : (
+                <NeutralAvatar seed={character.id} />
+            )}
+        </div>
     );
 };
 
-interface CharacterGroupProps {
-    characters: Character[];
-}
+const StatusLine = ({ character }: { character: Character }) => {
+    const expression = EXPRESSIONS[character.expression] ?? EXPRESSIONS.neutral;
+    const status = COMM_STATUS[character.status] ?? COMM_STATUS.idle;
+    const ExpressionIcon = expression.icon;
+    return (
+        <div className={`flex items-center gap-3 text-xs ${MUTED}`}>
+            <span className="flex items-center gap-1.5">
+                <span className={`h-2 w-2 rounded-full ${status.dot}`} />
+                {status.label}
+            </span>
+            <span className="flex items-center gap-1" title={`Expression : ${expression.label}`}>
+                <ExpressionIcon size={13} /> {expression.label}
+            </span>
+        </div>
+    );
+};
+
+/* ------------------------------------------------------------------ */
+/* Carte simple (briefing)                                             */
+/* ------------------------------------------------------------------ */
+
+export const CharacterDisplay = ({ character }: { character: Character }) => (
+    <article aria-label={`${character.name}, ${character.role}`} className={`${SURFACE} flex items-center gap-4 p-4`}>
+        <Portrait character={character} size="h-16 w-16" />
+        <div className="min-w-0">
+            <p className="truncate text-base font-bold">{character.name}</p>
+            <p className={`truncate text-sm ${MUTED}`}>{character.role}</p>
+            <div className="mt-1">
+                <StatusLine character={character} />
+            </div>
+        </div>
+    </article>
+);
 
 /** Affiche un ou plusieurs interlocuteurs côte à côte. */
-export const CharacterGroup = ({ characters }: CharacterGroupProps) => (
+export const CharacterGroup = ({ characters }: { characters: Character[] }) => (
     <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
         {characters.map((character) => (
             <CharacterDisplay key={character.id} character={character} />
         ))}
     </div>
 );
+
+/* ------------------------------------------------------------------ */
+/* Scène d'appel (jeu) : celui qui parle au premier plan               */
+/* ------------------------------------------------------------------ */
+
+const pickSpeaker = (characters: Character[]): Character | undefined =>
+    characters.find((c) => c.status === "speaking") ?? [...characters].reverse().find((c) => c.dialogue) ?? characters[0];
+
+export const CallStage = ({ characters }: { characters: Character[] }) => {
+    const speaker = pickSpeaker(characters);
+    const speaking = speaker?.status === "speaking";
+    const { shown, done, skip } = useTypewriter(speaker?.dialogue ?? "", speaking);
+    if (!speaker) return null;
+
+    return (
+        <section className={`${SURFACE} p-5`} aria-label="Interlocuteurs">
+            <p className={`${LABEL} mb-3`}>EN LIGNE</p>
+
+            <div className="flex items-start gap-4">
+                <Portrait character={speaker} size="h-20 w-20" />
+                <div className="min-w-0 flex-1">
+                    <div className="flex flex-wrap items-baseline gap-x-3">
+                        <p className="text-lg font-bold">{speaker.name}</p>
+                        <p className={`text-sm ${MUTED}`}>{speaker.role}</p>
+                    </div>
+                    <StatusLine character={speaker} />
+
+                    <button
+                        type="button"
+                        onClick={skip}
+                        disabled={done}
+                        aria-label="Afficher la réplique en entier"
+                        className={`${SURFACE_INNER} mt-3 block min-h-[4.5rem] w-full p-3.5 text-left text-base leading-relaxed disabled:cursor-default`}
+                    >
+                        {speaker.dialogue ? (
+                            <>
+                                « {shown}
+                                {done ? " »" : <span className="ml-0.5 inline-block h-4 w-1 animate-pulse bg-[#2b2a26] align-middle motion-reduce:animate-none" />}
+                            </>
+                        ) : (
+                            <span className={`italic ${MUTED}`}>Pas encore de contact.</span>
+                        )}
+                    </button>
+                </div>
+            </div>
+
+            <ul className="mt-4 flex flex-wrap gap-2 border-t border-[#ddd2b6] pt-3" aria-label="Contacts">
+                {characters.map((character) => {
+                    const active = character.id === speaker.id;
+                    return (
+                        <li
+                            key={character.id}
+                            className={`flex items-center gap-2 rounded-full border py-1 pl-1 pr-3 text-sm ${
+                                active ? "border-[#2b2a26] bg-[#faf6ea] font-semibold" : "border-[#ddd2b6] text-[#6b6657]"
+                            }`}
+                        >
+                            <Portrait character={character} size="h-7 w-7" />
+                            {character.name}
+                        </li>
+                    );
+                })}
+            </ul>
+        </section>
+    );
+};
 
 export default CharacterDisplay;

@@ -8,11 +8,13 @@ import { BriefingScreen } from "./BriefingScreen";
 import { DebriefScreen } from "./DebriefScreen";
 import { MissionPanel } from "./MissionPanel";
 import { StatusIndicators } from "./StatusIndicators";
-import { CharacterGroup } from "./CharacterDisplay";
+import { CallStage, CharacterGroup } from "./CharacterDisplay";
 import { OutcomeBanner } from "./OutcomeBanner";
 import { ToolPanel } from "./ToolPanel";
 import { ActionPanel } from "./ActionPanel";
 import { DialoguePanel } from "./DialoguePanel";
+import { DecisionOverlay } from "./DecisionOverlay";
+import { DESK } from "./ui";
 
 /**
  * Expérience de jeu principale (pré-alpha, 100 % locale).
@@ -20,6 +22,10 @@ import { DialoguePanel } from "./DialoguePanel";
  * Boucle : prise de poste → mission → observation → interactions → décision
  * → conséquences → progression → bilan. Toute la simulation est calculée dans
  * React à partir d'une `MissionDefinition` ; rien ne dépend du backend.
+ *
+ * Lecture de l'écran : à gauche, ce qui se passe (qui parle, ce que tu viens de
+ * provoquer, ton poste de travail) ; à droite, ce que tu dois faire (mission,
+ * conditions à réunir, commandes). Une décision s'ouvre en fiche au centre.
  *
  * FUTURE INTEGRATION BACKEND :
  * remplacer `offshoreTurbineMission` par le scénario de la session et
@@ -68,7 +74,7 @@ export const GameplayPrototype: FC<GameplayPrototypeProps> = ({ onQuit }) => {
 
     if (state.phase === "briefing") {
         return (
-            <div className="min-h-screen bg-[#080d14] text-slate-100">
+            <div className={`min-h-screen ${DESK}`}>
                 {header}
                 <BriefingScreen
                     briefing={mission.briefing}
@@ -85,7 +91,7 @@ export const GameplayPrototype: FC<GameplayPrototypeProps> = ({ onQuit }) => {
         const debrief = getDebrief(state, mission);
         if (debrief) {
             return (
-                <div className="min-h-screen bg-[#080d14] text-slate-100">
+                <div className={`min-h-screen ${DESK}`}>
                     {header}
                     <DebriefScreen
                         result={debrief.result}
@@ -108,59 +114,59 @@ export const GameplayPrototype: FC<GameplayPrototypeProps> = ({ onQuit }) => {
     );
 
     return (
-        <div className="min-h-screen bg-[#080d14] text-slate-100">
+        <div className={`min-h-screen ${DESK}`}>
             {header}
 
-            <main className="mx-auto grid max-w-[1500px] grid-cols-1 gap-5 p-4 md:p-7 lg:grid-cols-[280px_minmax(0,1fr)_330px]">
-                {/* GAUCHE : mission et indicateurs */}
-                <aside className="space-y-5">
-                    <MissionPanel
-                        title={mission.title}
-                        role={mission.role}
-                        location={mission.location}
-                        summary={mission.summary}
-                        objectives={progress.objectives}
-                        info={info.visible}
-                        hiddenCount={info.hiddenCount}
-                    />
-                    <StatusIndicators indicators={getIndicatorViews(state, mission)} />
-                </aside>
+            <div className="mx-auto max-w-[1280px] space-y-5 p-4 md:p-6">
+                <StatusIndicators indicators={getIndicatorViews(state, mission)} />
 
-                {/* CENTRE : interlocuteurs, conséquences, espace de travail */}
-                <div className="min-w-0 space-y-5">
-                    <CharacterGroup characters={characters} />
-                    <OutcomeBanner turn={state.lastTurn} />
-                    <ToolPanel
-                        tools={workspaceTools}
-                        activeToolId={state.activeToolId}
-                        onSelectTool={selectTool}
-                        actions={mission.actions}
-                        characters={state.characters}
-                        readouts={mission.readouts(ctx)}
-                        findings={state.findings}
-                        status={status}
-                        onPerform={perform}
-                    />
+                <div className="grid grid-cols-1 gap-5 lg:grid-cols-[minmax(0,1fr)_370px]">
+                    {/* GAUCHE : ce qui se passe */}
+                    <div className="min-w-0 space-y-5">
+                        <CallStage characters={characters} />
+                        <OutcomeBanner turn={state.lastTurn} />
+                        <ToolPanel
+                            tools={workspaceTools}
+                            activeToolId={state.activeToolId}
+                            onSelectTool={selectTool}
+                            actions={mission.actions}
+                            characters={state.characters}
+                            readouts={mission.readouts(ctx)}
+                            findings={state.findings}
+                            status={status}
+                            onPerform={perform}
+                        />
+                    </div>
+
+                    {/* DROITE : ce que tu dois faire */}
+                    <aside className="space-y-5">
+                        <MissionPanel
+                            title={mission.title}
+                            location={mission.location}
+                            objectives={progress.objectives}
+                            info={info.visible}
+                            hiddenCount={info.hiddenCount}
+                        />
+                        <ActionPanel
+                            actions={commandActions}
+                            status={status}
+                            readiness={mission.readiness(ctx)}
+                            result={state.result}
+                            onPerform={perform}
+                            onOpenDebrief={openDebrief}
+                        />
+                        <DialoguePanel lines={state.dialogue} characters={state.characters} />
+                    </aside>
                 </div>
+            </div>
 
-                {/* DROITE : actions et communications */}
-                <aside className="space-y-5">
-                    <ActionPanel
-                        actions={commandActions}
-                        status={status}
-                        readiness={mission.readiness(ctx)}
-                        result={state.result}
-                        onPerform={perform}
-                        onOpenDebrief={openDebrief}
-                    />
-                    <DialoguePanel
-                        lines={state.dialogue}
-                        characters={state.characters}
-                        pendingDecision={pendingDecision}
-                        onChoose={decide}
-                    />
-                </aside>
-            </main>
+            {pendingDecision && (
+                <DecisionOverlay
+                    decision={pendingDecision}
+                    speakerName={pendingDecision.characterId ? state.characters[pendingDecision.characterId]?.name : undefined}
+                    onChoose={decide}
+                />
+            )}
         </div>
     );
 };

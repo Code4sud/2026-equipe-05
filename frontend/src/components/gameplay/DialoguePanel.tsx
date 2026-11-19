@@ -1,97 +1,61 @@
 import { useEffect, useRef } from "react";
-import { MessageSquare } from "lucide-react";
-import type { Character, DecisionDefinition, DialogueLine } from "./types";
-import { EXPRESSIONS, SURFACE, VERBS } from "./ui";
+import { History } from "lucide-react";
+import type { Character, DialogueLine } from "./types";
+import { MUTED, SURFACE } from "./ui";
 import { formatClock } from "./simulation";
 
 interface DialoguePanelProps {
     lines: DialogueLine[];
     characters: Record<string, Character>;
-    pendingDecision: DecisionDefinition | null;
-    onChoose: (optionId: string) => void;
 }
 
 /**
- * Journal des communications + décision en attente.
+ * Historique des échanges (replié par défaut : la réplique en cours est déjà
+ * affichée sur la scène d'appel).
  *
  * FUTURE INTEGRATION IA :
  * les répliques affichées ici viendront des agents. Le panneau ne dépend que
  * de `DialogueLine` : il suffira d'alimenter la liste.
  */
-export const DialoguePanel = ({ lines, characters, pendingDecision, onChoose }: DialoguePanelProps) => {
-    const logRef = useRef<HTMLDivElement>(null);
+export const DialoguePanel = ({ lines, characters }: DialoguePanelProps) => {
+    const logRef = useRef<HTMLOListElement>(null);
 
     useEffect(() => {
         const node = logRef.current;
         if (node) node.scrollTop = node.scrollHeight;
-    }, [lines.length, pendingDecision?.id]);
+    }, [lines.length]);
 
     return (
-        <section className={`${SURFACE} flex min-h-0 flex-col`} aria-label="Communications">
-            <div className="flex items-center gap-2 border-b border-white/10 px-5 py-4 text-cyan-400">
-                <MessageSquare size={16} />
-                <span className="text-[10px] font-bold tracking-[0.16em]">COMMUNICATIONS</span>
-            </div>
+        <details className={`${SURFACE} group`} aria-label="Historique des échanges">
+            <summary className="flex cursor-pointer list-none items-center gap-2 px-5 py-3.5 text-sm font-semibold">
+                <History size={16} className={MUTED} />
+                Historique des échanges
+                <span className={`ml-auto text-xs font-normal ${MUTED}`}>{lines.length} message{lines.length > 1 ? "s" : ""}</span>
+            </summary>
 
-            <div ref={logRef} className="max-h-72 space-y-3 overflow-y-auto px-4 py-4" aria-live="polite">
-                {lines.length === 0 && <p className="text-xs italic text-slate-500">Aucun échange pour le moment.</p>}
+            <ol ref={logRef} className="max-h-72 space-y-3 overflow-y-auto border-t border-[#ddd2b6] px-5 py-4">
+                {lines.length === 0 && <li className={`text-sm italic ${MUTED}`}>Aucun échange pour le moment.</li>}
                 {lines.map((line) => {
                     const isPlayer = line.speakerId === "player";
                     const speaker = characters[line.speakerId];
-                    const ExpressionIcon = speaker ? (EXPRESSIONS[line.expression ?? "neutral"] ?? EXPRESSIONS.neutral).icon : null;
                     return (
-                        <div key={line.id} className={`flex flex-col ${isPlayer ? "items-end" : "items-start"}`}>
-                            <p className="mb-1 flex items-center gap-1.5 text-[10px] text-slate-500">
-                                <span className="font-semibold text-slate-300">{isPlayer ? "Toi" : (speaker?.name ?? line.speakerId)}</span>
-                                {speaker && <span>· {speaker.role}</span>}
-                                {ExpressionIcon && <ExpressionIcon size={11} />}
+                        <li key={line.id} className={`flex flex-col ${isPlayer ? "items-end" : "items-start"}`}>
+                            <p className={`mb-1 flex items-center gap-1.5 text-xs ${MUTED}`}>
+                                <span className="font-semibold text-[#2b2a26]">{isPlayer ? "Toi" : (speaker?.name ?? line.speakerId)}</span>
                                 <span className="font-mono">{formatClock(line.clock)}</span>
                             </p>
                             <p
-                                className={`max-w-[92%] rounded-lg border px-3 py-2 text-xs leading-relaxed ${
-                                    isPlayer
-                                        ? "border-cyan-400/20 bg-cyan-400/10 text-cyan-50"
-                                        : "border-white/5 bg-[#0a121c] text-slate-200"
+                                className={`max-w-[92%] rounded-md border px-3 py-2 text-sm leading-relaxed ${
+                                    isPlayer ? "border-[#a9c4d6] bg-[#e1ebf2]" : "border-[#ddd2b6] bg-[#faf6ea]"
                                 }`}
                             >
                                 {line.text}
                             </p>
-                        </div>
+                        </li>
                     );
                 })}
-            </div>
-
-            {pendingDecision && (
-                <div className="border-t border-amber-400/30 bg-amber-400/5 p-4" role="group" aria-label="Décision en attente">
-                    <p className="mb-1 text-[10px] font-bold tracking-[0.16em] text-amber-300">
-                        DÉCISION · {pendingDecision.title.toUpperCase()}
-                    </p>
-                    <p className="mb-3 text-xs leading-relaxed text-slate-200">{pendingDecision.prompt}</p>
-
-                    {/* FUTURE INTEGRATION BACKEND : transmettre le choix à la session. */}
-                    <div className="space-y-2">
-                        {pendingDecision.options.map((option) => {
-                            const Verb = VERBS[option.verb];
-                            const Icon = Verb.icon;
-                            return (
-                                <button
-                                    key={option.id}
-                                    type="button"
-                                    onClick={() => onChoose(option.id)}
-                                    className="w-full rounded-lg border border-white/10 bg-[#0a121c] p-3 text-left transition-all hover:border-amber-400/50 hover:bg-amber-400/5 focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-400"
-                                >
-                                    <span className="flex items-center gap-2 text-xs font-semibold">
-                                        <Icon size={14} className="shrink-0 text-amber-300" />
-                                        {option.label}
-                                    </span>
-                                    {option.hint && <span className="mt-1 block pl-[22px] text-[10px] text-slate-500">{option.hint}</span>}
-                                </button>
-                            );
-                        })}
-                    </div>
-                </div>
-            )}
-        </section>
+            </ol>
+        </details>
     );
 };
 

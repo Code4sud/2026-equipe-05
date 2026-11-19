@@ -1,6 +1,5 @@
 import { useState } from "react";
 import type { Character } from "./types";
-import { Clock, Target } from "lucide-react";
 import { COMM_STATUS, EXPRESSIONS, MUTED, SURFACE } from "./ui";
 
 /**
@@ -95,43 +94,6 @@ export const CharacterGroup = ({ characters }: { characters: Character[] }) => (
             <CharacterDisplay key={character.id} character={character} />
         ))}
     </div>
-);
-
-/* ------------------------------------------------------------------ */
-/* En-tête de la rencontre : qui te parle, à quelle heure, pour quel objectif */
-/* ------------------------------------------------------------------ */
-
-interface CallHeaderProps {
-    character: Character;
-    title: string;
-    time: string;
-    objectiveLabel?: string;
-}
-
-export const CallHeader = ({ character, title, time, objectiveLabel }: CallHeaderProps) => (
-    <section className={`${SURFACE} flex flex-wrap items-center gap-x-5 gap-y-3 p-4`} aria-label="Interlocuteur">
-        <Portrait character={character} size="h-16 w-16" />
-        <div className="min-w-0 flex-1">
-            <p className="text-lg font-bold leading-tight">{character.name}</p>
-            <p className={`text-sm ${MUTED}`}>{character.role}</p>
-            <div className="mt-1">
-                <StatusLine character={character} />
-            </div>
-        </div>
-        <div className="min-w-0 basis-full space-y-1.5 border-t border-[#ddd2b6] pt-3 sm:basis-auto sm:border-l sm:border-t-0 sm:pl-5 sm:pt-0">
-            <p className="text-sm font-semibold leading-snug">{title}</p>
-            <p className={`flex flex-wrap items-center gap-x-4 gap-y-1 text-xs ${MUTED}`}>
-                <span className="flex items-center gap-1.5 font-mono font-bold">
-                    <Clock size={13} /> {time}
-                </span>
-                {objectiveLabel && (
-                    <span className="flex items-center gap-1.5">
-                        <Target size={13} /> Objectif : {objectiveLabel}
-                    </span>
-                )}
-            </p>
-        </div>
-    </section>
 );
 
 export default CharacterDisplay;

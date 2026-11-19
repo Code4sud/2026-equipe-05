@@ -85,6 +85,11 @@ export interface ReplyOption {
   id: string;
   /** Ce que dit le joueur, à la première personne. */
   label: string;
+  /**
+   * Mots-clés (sans accents, en minuscules) utilisés UNIQUEMENT par le scénario
+   * local pour rapprocher une phrase libre de cette réponse. Un agent IA n'en a pas besoin.
+   */
+  keywords?: string[];
   outcome: Outcome | ((ctx: GameContext) => Outcome);
 }
 
@@ -96,8 +101,12 @@ export interface Encounter {
   time: string;
   /** La situation, en quelques mots (« Appel du responsable »). */
   title: string;
+  /** D'où te parle le personnage (« Atelier maintenance · radio »). */
+  place?: string;
   /** Objectif de la mission que cette situation fait avancer. */
   objectiveId?: string;
+  /** « Dans ce métier… » : ce que cette situation apprend sur le travail réel. */
+  metier?: string;
   /** Ce que dit le personnage en arrivant (peut dépendre du contexte). */
   opening: DialogueInput[] | ((ctx: GameContext) => DialogueInput[]);
   replies: ReplyOption[];

@@ -61,6 +61,9 @@ const encounters: Encounter[] = [
         characterId: "marc",
         time: "06:40",
         title: "Marc t'appelle : alarme sur E-4",
+        place: "Bureau d'exploitation · appel",
+        metier:
+            "Un responsable de permanence ne se précipite pas : il rassemble d'abord les faits (mesures, météo, état de la machine) avant de décider.",
         objectiveId: "understand",
         opening: [
             say("marc", "Salut ! Une alarme de vibrations vient de se déclencher sur l'éolienne E-4, en pleine mer. Le vent souffle à 25 nœuds, ça secoue.", "concerned"),
@@ -106,6 +109,9 @@ const encounters: Encounter[] = [
         characterId: "tom",
         time: "06:55",
         title: "Tom, chef d'équipe, te demande ton diagnostic",
+        place: "Atelier maintenance · radio",
+        metier:
+            "Le diagnostic se fait avec des données : vibration, température d'huile, comparaison avec les autres machines. Une intuition ne suffit pas.",
         objectiveId: "understand",
         opening: (ctx) => [
             ctx.has("checked_data")
@@ -155,6 +161,9 @@ const encounters: Encounter[] = [
         characterId: "tom",
         time: "07:05",
         title: "Tom reprend le diagnostic avec toi",
+        place: "Atelier maintenance · radio",
+        metier:
+            "Revenir sur une première idée quand les faits la contredisent, c'est une qualité de technicien, pas un échec.",
         objectiveId: "understand",
         when: (ctx) => ctx.has("diag_wrong") && !ctx.has("diag_ok"),
         opening: [
@@ -191,6 +200,9 @@ const encounters: Encounter[] = [
         characterId: "claire",
         time: "07:20",
         title: "La direction veut relancer la machine",
+        place: "Siège de l'entreprise · téléphone",
+        metier:
+            "La production veut produire, la sécurité veut protéger : le métier consiste à tenir la ligne rouge avec des arguments chiffrés.",
         objectiveId: "secure",
         opening: (ctx) => [
             ctx.has("stopped")
@@ -238,6 +250,9 @@ const encounters: Encounter[] = [
         characterId: "tom",
         time: "07:35",
         title: "Alarme niveau 2 : E-4 s'est coupée seule",
+        place: "Atelier maintenance · radio",
+        metier:
+            "Quand une erreur arrive, on la déclare tout de suite et on sécurise : c'est comme ça qu'on limite les dégâts.",
         objectiveId: "secure",
         when: (ctx) => ctx.has("degraded"),
         opening: [
@@ -274,6 +289,9 @@ const encounters: Encounter[] = [
         characterId: "tom",
         time: "07:50",
         title: "Tom demande la procédure de sécurité",
+        place: "Atelier maintenance · radio",
+        metier:
+            "Arrêt, consignation, accès : cet ordre est écrit dans toutes les procédures de maintenance, parce que des gens se sont blessés quand il n'était pas respecté.",
         objectiveId: "secure",
         opening: (ctx) => [
             ctx.has("stopped") || ctx.has("degraded")
@@ -321,6 +339,9 @@ const encounters: Encounter[] = [
         characterId: "tom",
         time: "08:00",
         title: "Tom te repose la question, calmement",
+        place: "Atelier maintenance · radio",
+        metier:
+            "Même un professionnel revérifie sa procédure : on ne monte jamais « de mémoire ».",
         objectiveId: "secure",
         when: (ctx) => ctx.has("skipped_lock") && !ctx.has("secured"),
         opening: [
@@ -357,6 +378,9 @@ const encounters: Encounter[] = [
         characterId: "nadia",
         time: "08:10",
         title: "Nadia, météo marine, donne sa prévision",
+        place: "Station météo marine · radio",
+        metier:
+            "En mer, la météo décide : une équipe monte sur une éolienne seulement sous une limite de vent et de vagues.",
         objectiveId: "team",
         opening: (ctx) => [
             ctx.has("rushed")
@@ -405,6 +429,9 @@ const encounters: Encounter[] = [
         characterId: "tom",
         time: "08:35",
         title: "Tom : l'équipe est prête, on y va ?",
+        place: "Quai de départ · radio",
+        metier:
+            "Avant d'envoyer une équipe, on coche une liste précise : machine verrouillée, météo dans la fenêtre, équipe prête.",
         objectiveId: "team",
         opening: (ctx) => [
             teamReady(ctx)
@@ -476,6 +503,9 @@ const encounters: Encounter[] = [
         characterId: "marc",
         time: "10:00",
         title: "Marc te demande ton compte rendu",
+        place: "Bureau d'exploitation · en face à face",
+        metier:
+            "Le compte rendu fait partie du travail : il permet à l'équipe suivante de ne pas refaire les mêmes erreurs.",
         objectiveId: "report",
         opening: (ctx) => [
             say("marc", "L'équipe est de retour. Merci pour ta permanence.", madeMistake(ctx) ? "concerned" : "happy"),
@@ -523,6 +553,70 @@ const encounters: Encounter[] = [
 ];
 
 /* ------------------------------------------------------------------ */
+/* Mots-clés du scénario local (rapprochement des phrases libres)       */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Le scénario local ne comprend pas le langage : pour une phrase libre, il
+ * compte seulement les mots-clés ci-dessous (sans accents, sans apostrophes).
+ * Ce n'est pas de l'IA. Un agent IA remplacera ce rapprochement.
+ */
+const KEYWORDS: Record<string, Record<string, string[]>> = {
+    alert: {
+        data: ["mesure", "verifi", "regard", "donnee", "chiffre", "releve", "analys", "observ"],
+        rush: ["tout de suite", "immediat", "sans attendre", "vite", "urgence"],
+        stop: ["arret", "stopp", "coupe", "precaution", "eteins"],
+    },
+    diagnosis: {
+        bearing: ["roulement", "multiplicateur", "usure", "use", "frott", "huile chaude"],
+        sensor: ["capteur", "fausse alarme", "faux", "casse", "defaill"],
+        frost: ["givre", "glace", "pale"],
+    },
+    second_opinion: {
+        bearing: ["roulement", "multiplicateur", "usure", "use", "frott"],
+        help: ["sais pas", "explique", "aide", "comprends pas"],
+    },
+    pressure: {
+        refuse: ["non", "refus", "dangereux", "danger", "preuve", "92", "huile", "risque"],
+        accept: ["daccord", "ok", "accepte", "relanc", "oui", "50"],
+        delay: ["minutes", "verifier", "rappel", "temps", "laissez"],
+    },
+    trip: {
+        own: ["assume", "securite", "previens", "consigne", "responsable"],
+        blame: ["pas ma faute", "direction", "insist", "pas moi", "leur faute"],
+    },
+    procedure: {
+        right: ["arret", "consign", "apres", "ordre", "cadenas", "verrouill"],
+        onsite: ["monte dabord", "monter dabord", "sur place", "coupe une fois"],
+        nolock: ["sans arreter", "plus vite", "sans couper", "sans arret"],
+    },
+    procedure_retry: {
+        right: ["arret", "consign", "apres", "ordre", "cadenas", "verrouill"],
+        help: ["souviens", "rappel", "sais pas", "explique", "aide", "oublie"],
+    },
+    weather: {
+        wait: ["attend", "8 h 30", "8h30", "fenetre", "plus tard", "patient"],
+        now: ["maintenant", "tout de suite", "gagn", "sans attendre", "immediat"],
+        cancel: ["annul", "abandon", "rien faire", "trop"],
+    },
+    team: {
+        go: ["go", "oui", "pret", "condition", "reuni", "tout est"],
+        wait: ["pas encore", "attend", "verifi", "manque", "doute"],
+        hurry: ["vite", "pressons", "pas de temps", "perdons pas", "urgent"],
+    },
+    report: {
+        full: ["complet", "detail", "erreur", "rate", "raconte", "explique", "honn", "pas marche", "decid"],
+        nothing: ["rien a signaler", "tout va bien", "bien passe", "rien"],
+        short: ["vite fait", "rapide", "sans detail", "bref", "court", "resume"],
+    },
+};
+encounters.forEach((encounter) => {
+    encounter.replies.forEach((reply) => {
+        reply.keywords = KEYWORDS[encounter.id]?.[reply.id];
+    });
+});
+
+/* ------------------------------------------------------------------ */
 /* Visite guidée vocale (textes écrits à la main, pas un agent IA)      */
 /* ------------------------------------------------------------------ */
 
@@ -552,28 +646,20 @@ const guide: GuideStep[] = [
             "Deuxième zone : tes jauges ! Sécurité, confiance, efficacité. Chaque réponse les fait monter ou descendre, et tu vois tout de suite de combien. Attention : si la sécurité tombe à zéro, la mission s'arrête !",
     },
     {
-        id: "call",
-        targetId: "call",
-        title: "Qui te parle",
-        where: "En haut de la conversation",
+        id: "stage",
+        targetId: "stage",
+        title: "Ton interlocuteur",
+        where: "La grande scène, au centre",
         speech:
-            "Troisième zone : qui te parle ! Tu vois la personne qui vient te voir, son métier, l'heure, et l'objectif concerné. Son visage change selon son humeur : rassuré, inquiet, ou furieux !",
-    },
-    {
-        id: "chat",
-        targetId: "chat",
-        title: "La conversation",
-        where: "Au milieu de l'écran",
-        speech:
-            "Quatrième zone : la conversation ! Tout ce qui se dit s'écrit ici, comme dans une messagerie. Les conséquences de tes choix aussi, sur des cartes colorées avec le détail des jauges. Lis-les : c'est comme ça que tu apprends le métier !",
+            "Troisième zone : ton interlocuteur ! Il est en face de toi, dans ton lieu de travail. Sa bulle affiche ce qu'il dit : appuie sur Entrée pour lire la suite. Son visage change selon son humeur : rassuré, inquiet, ou furieux. Regarde aussi le lieu et l'objectif en haut de la scène !",
     },
     {
         id: "replies",
         targetId: "replies",
         title: "Tes réponses",
-        where: "En bas de la conversation",
+        where: "Sous la scène",
         speech:
-            "Cinquième zone : tes réponses ! Tu choisis ce que tu dis. Clique, ou tape le chiffre au clavier. Chaque réponse a ses conséquences, et le personnage réagit à ce que tu dis. Réfléchis, puis réponds !",
+            "Quatrième zone : tes réponses ! Trois réponses toutes prêtes : clique, ou tape le chiffre au clavier. Tu peux aussi écrire ta propre réponse avec tes mots. Ensuite, il réagit, et une carte t'explique les conséquences, avec ce que ça change dans ton métier. Réfléchis, puis réponds !",
     },
     {
         id: "final",

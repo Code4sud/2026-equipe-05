@@ -8,8 +8,11 @@ import { BriefingScreen } from "./BriefingScreen";
 import { DebriefScreen } from "./DebriefScreen";
 import { MissionPanel } from "./MissionPanel";
 import { StatusIndicators } from "./StatusIndicators";
-import { CallHeader } from "./CharacterDisplay";
+import { DialogueStage } from "./DialogueStage";
 import { ChatLog, ReplyPicker } from "./ChatPanel";
+import type { ReplyMode } from "./ChatPanel";
+import { lastCharBeatUpTo, useScene } from "./useScene";
+import { useTypewriter } from "./hooks";
 import { GuideProvider, GuideZone, hasSeenGuide, markGuideSeen } from "./guide";
 import { VoiceBox } from "./VoiceBox";
 import { DESK } from "./ui";
@@ -19,9 +22,10 @@ import type { Responder } from "./types";
  * Expérience de jeu principale (pré-alpha, 100 % locale).
  *
  * Boucle « à la Papers, Please » : quelqu'un vient te parler selon le contexte
- * (rencontre) → tu choisis ta réponse → le personnage réagit et les conséquences
- * s'appliquent (jauges, objectifs) → la personne suivante dépend de ce que tu as
- * fait → bilan.
+ * (rencontre), face à toi, dans ton lieu de travail, avec sa bulle → tu choisis
+ * l'une des trois réponses prêtes, ou tu écris la tienne → le personnage réagit et
+ * les conséquences s'appliquent (jauges, objectifs, « dans ce métier… ») → la
+ * personne suivante dépend de ce que tu as fait → bilan.
  *
  * Qui décide de la réaction et des conséquences ? Un « répondant » (`Responder`).
  * Aujourd'hui : `scriptedResponder`, scénario écrit à la main (PAS une IA).
@@ -96,8 +100,50 @@ export const GameplayPrototype: FC<GameplayPrototypeProps> = ({ onQuit, responde
     const encounter = getEncounter(mission, state.encounterId);
     const speaker = encounter ? state.characters[encounter.characterId] : undefined;
 
+    // Scène : répliques affichées une à une
+    const scene = useScene(state.chat, state.step, state.encounterId);
+    const beat = scene.beat;
+    const charBeat = beat?.kind === "char" ? beat : beat?.kind === "consequence" ? lastCharBeatUpTo(scene.beats, scene.cursor) : null;
+    const speechText = charBeat?.text ?? null;
+    const typing = useTypewriter(speechText ?? "", beat?.kind === "char");
+    const lineDone = speechText === null || typing.done;
+    const thinking = state.step === "thinking";
+
+    const advanceLine = useCallback(() => {
+        if (!typing.done) typing.skip();
+        else scene.advance();
+    }, [typing, scene]);
+
+    let mode: ReplyMode;
+    if (thinking) mode = "thinking";
+    else if (state.step === "asking" && guideActive) mode = "replies"; // la visite guidée montre la zone de réponse
+    else if (!scene.atLast || !lineDone) mode = "continue";
+    else mode = state.step === "asking" ? "replies" : "consequence";
+
     const chooseReply = useCallback((optionId: string, label: string) => void reply({ kind: "choice", optionId, label }), [reply]);
     const freeReply = useCallback((text: string) => void reply({ kind: "free", text }), [reply]);
+
+    // Entrée / Espace / flèche droite : réplique suivante, ou personne suivante (hors visite guidée)
+    const keys = useRef({ mode, advanceLine, next });
+    keys.current = { mode, advanceLine, next };
+    useEffect(() => {
+        if (state.phase !== "playing" || guideActive) return;
+        const onKey = (event: KeyboardEvent) => {
+            if (event.defaultPrevented || event.ctrlKey || event.metaKey || event.altKey) return;
+            if (!["Enter", " ", "ArrowRight"].includes(event.key)) return;
+            const target = event.target as { closest?: (selector: string) => Element | null } | null;
+            if (target?.closest?.("button, a, input, textarea, select, summary, [role='tab']")) return;
+            if (keys.current.mode === "continue") {
+                event.preventDefault();
+                keys.current.advanceLine();
+            } else if (keys.current.mode === "consequence") {
+                event.preventDefault();
+                keys.current.next();
+            }
+        };
+        window.addEventListener("keydown", onKey);
+        return () => window.removeEventListener("keydown", onKey);
+    }, [state.phase, guideActive]);
 
     const header = (
         <TopBar
@@ -140,6 +186,8 @@ export const GameplayPrototype: FC<GameplayPrototypeProps> = ({ onQuit, responde
     }
 
     const objectiveLabel = progress.objectives.find((objective) => objective.id === encounter?.objectiveId)?.label;
+    const consequenceBeat = beat?.kind === "consequence" ? beat : null;
+    const stageExpression = charBeat?.expression ?? (thinking ? "thinking" : (speaker?.expression ?? "neutral"));
 
     return (
         <GuideProvider value={guideState}>
@@ -151,34 +199,66 @@ export const GameplayPrototype: FC<GameplayPrototypeProps> = ({ onQuit, responde
                         <StatusIndicators indicators={getIndicatorViews(state, mission)} />
                     </GuideZone>
 
-                    <div className="grid grid-cols-1 gap-5 lg:grid-cols-[minmax(0,1fr)_320px]">
-                        {/* GAUCHE : la conversation */}
+                    <div className="grid grid-cols-1 gap-5 lg:grid-cols-[minmax(0,1fr)_300px]">
+                        {/* GAUCHE : la scène et tes réponses */}
                         <div className="min-w-0 space-y-5">
                             {speaker && encounter && (
-                                <GuideZone id="call" label="qui te parle">
-                                    <CallHeader character={speaker} title={encounter.title} time={encounter.time} objectiveLabel={objectiveLabel} />
+                                <GuideZone id="stage" label="ton interlocuteur">
+                                    <DialogueStage
+                                        character={speaker}
+                                        expression={stageExpression}
+                                        time={encounter.time}
+                                        place={encounter.place}
+                                        title={encounter.title}
+                                        objectiveLabel={objectiveLabel}
+                                        shown={speechText === null ? null : typing.shown}
+                                        fullText={speechText}
+                                        thinking={thinking}
+                                        playerText={beat?.kind === "player" ? beat.text : null}
+                                        done={lineDone}
+                                        more={!scene.atLast}
+                                        onAdvance={advanceLine}
+                                    />
                                 </GuideZone>
                             )}
-                            <GuideZone id="chat" label="la conversation">
-                                <ChatLog
-                                    entries={state.chat}
-                                    characters={state.characters}
-                                    typing={state.step === "thinking" ? speaker : null}
-                                />
-                            </GuideZone>
+
                             <GuideZone id="replies" label="tes réponses">
                                 <ReplyPicker
-                                    step={state.step}
+                                    mode={mode}
                                     speakerName={speaker?.name ?? "Ton interlocuteur"}
                                     replies={encounter?.replies.map(({ id, label }) => ({ id, label })) ?? []}
                                     supportsFreeText={supportsFreeText}
+                                    freeTextHint="Pré-alpha : le scénario local rapproche ta phrase de l'une des réponses ci-dessus (ce n'est pas encore une IA)."
                                     error={state.error}
                                     hasNext={!state.result && state.nextEncounterId !== null}
+                                    consequence={
+                                        consequenceBeat
+                                            ? {
+                                                  tone: consequenceBeat.entry.tone,
+                                                  title: consequenceBeat.entry.title,
+                                                  text: consequenceBeat.entry.text,
+                                                  deltas: consequenceBeat.entry.deltas,
+                                                  objectives: consequenceBeat.objectives,
+                                                  metier: encounter?.metier,
+                                              }
+                                            : null
+                                    }
                                     onChoose={chooseReply}
                                     onFree={freeReply}
+                                    onContinue={advanceLine}
                                     onNext={next}
                                 />
                             </GuideZone>
+
+                            <details className="rounded-lg border border-[#41505b] bg-[#1b1f23] text-[#e8e2d0]">
+                                <summary className="cursor-pointer px-4 py-2.5 text-sm font-semibold text-[#a39d8a] hover:text-white">
+                                    Relire la conversation
+                                </summary>
+                                <div className="p-3">
+                                    <ChatLog entries={state.chat} characters={state.characters} />
+                                </div>
+                            </details>
+                            <p className="text-xs text-[#8f8a78]">Pré-alpha : les réactions des personnages sont écrites à la main (pas encore d'agent IA).</p>
                         </div>
 
                         {/* DROITE : la mission */}

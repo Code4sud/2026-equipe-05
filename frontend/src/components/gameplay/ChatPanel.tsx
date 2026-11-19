@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import type { FormEvent } from "react";
-import { AlertTriangle, ArrowRight, BadgeCheck, CheckCircle2, Info, Send, XCircle } from "lucide-react";
+import { AlertTriangle, ArrowRight, BadgeCheck, CheckCircle2, ChevronRight, HardHat, Info, Send, XCircle } from "lucide-react";
 import type { ElementType } from "react";
-import type { ChatEntry, Character, Step, Tone } from "./types";
+import type { ChatEntry, Character, Tone } from "./types";
 import { Portrait } from "./CharacterDisplay";
 import { useGuide } from "./guide";
 import { BTN_DARK, FOCUS, LABEL, MUTED, SURFACE, SURFACE_INNER, TONE } from "./ui";
@@ -23,6 +23,60 @@ const TONE_ICON: Record<Tone, ElementType> = {
     bad: XCircle,
 };
 
+/* ------------------------------------------------------------------ */
+/* Carte de conséquence                                                */
+/* ------------------------------------------------------------------ */
+
+interface ConsequenceCardProps {
+    tone: Tone;
+    title?: string;
+    text: string;
+    deltas: { label: string; delta: number }[];
+    /** Objectifs tout juste atteints. */
+    objectives?: string[];
+    /** « Dans ce métier… » : ce que la situation apprend du travail réel. */
+    metier?: string;
+}
+
+export const ConsequenceCard = ({ tone: toneKey, title, text, deltas, objectives = [], metier }: ConsequenceCardProps) => {
+    const tone = TONE[toneKey];
+    const Icon = TONE_ICON[toneKey];
+    return (
+        <div className={`rounded-lg border-2 px-4 py-3 ${tone.border} ${tone.bg}`}>
+            <p className={`flex items-center gap-2 text-base font-bold ${tone.text}`}>
+                <Icon size={18} className="shrink-0" /> {title ?? "Conséquence"}
+            </p>
+            <p className="mt-1 text-base leading-relaxed">{text}</p>
+            {deltas.length > 0 && (
+                <ul className="mt-2 flex flex-wrap gap-2" aria-label="Effets sur les jauges">
+                    {deltas.map((delta) => (
+                        <li
+                            key={delta.label}
+                            className={`rounded px-2 py-0.5 font-mono text-xs font-bold ${delta.delta > 0 ? "bg-[#cfe6c6] text-[#1f5a2c]" : "bg-[#f0c9c4] text-[#8a2620]"}`}
+                        >
+                            {delta.label} {delta.delta > 0 ? "+" : "−"}
+                            {Math.abs(delta.delta)}
+                        </li>
+                    ))}
+                </ul>
+            )}
+            {objectives.map((objective) => (
+                <p key={objective} className="mt-2 flex items-center gap-2 rounded-full bg-[#2f6b3a] px-3 py-1 text-sm font-bold text-white">
+                    <BadgeCheck size={16} className="shrink-0" /> Objectif atteint : {objective}
+                </p>
+            ))}
+            {metier && (
+                <p className="mt-3 flex items-start gap-2 border-t border-black/10 pt-2.5 text-sm leading-relaxed">
+                    <HardHat size={17} className="mt-0.5 shrink-0 text-[#6b6657]" />
+                    <span>
+                        <span className="font-bold">Dans ce métier : </span>
+                        {metier}
+                    </span>
+                </p>
+            )}
+        </div>
+    );
+};
 /* ------------------------------------------------------------------ */
 /* Fil de conversation                                                 */
 /* ------------------------------------------------------------------ */
@@ -86,33 +140,8 @@ export const ChatLog = ({ entries, characters, typing }: ChatLogProps) => {
                             );
                         case "say":
                             return <Bubble key={entry.id} entry={entry} characters={characters} />;
-                        case "consequence": {
-                            const tone = TONE[entry.tone];
-                            const Icon = TONE_ICON[entry.tone];
-                            return (
-                                <div key={entry.id} className={`rounded-lg border-2 px-4 py-3 ${tone.border} ${tone.bg}`}>
-                                    <p className={`flex items-center gap-2 text-sm font-bold ${tone.text}`}>
-                                        <Icon size={17} className="shrink-0" /> {entry.title ?? "Conséquence"}
-                                    </p>
-                                    <p className="mt-1 text-sm leading-relaxed">{entry.text}</p>
-                                    {entry.deltas.length > 0 && (
-                                        <ul className="mt-2 flex flex-wrap gap-2" aria-label="Effets sur les jauges">
-                                            {entry.deltas.map((delta) => (
-                                                <li
-                                                    key={delta.label}
-                                                    className={`rounded px-2 py-0.5 font-mono text-xs font-bold ${
-                                                        delta.delta > 0 ? "bg-[#cfe6c6] text-[#1f5a2c]" : "bg-[#f0c9c4] text-[#8a2620]"
-                                                    }`}
-                                                >
-                                                    {delta.label} {delta.delta > 0 ? "+" : "−"}
-                                                    {Math.abs(delta.delta)}
-                                                </li>
-                                            ))}
-                                        </ul>
-                                    )}
-                                </div>
-                            );
-                        }
+                        case "consequence":
+                            return <ConsequenceCard key={entry.id} tone={entry.tone} title={entry.title} text={entry.text} deltas={entry.deltas} />;
                         case "objective":
                             return (
                                 <p
@@ -145,9 +174,6 @@ export const ChatLog = ({ entries, characters, typing }: ChatLogProps) => {
                     </div>
                 )}
             </div>
-            <p className="border-t border-[#ddd2b6] px-4 py-2 text-xs text-[#8b8570]">
-                Pré-alpha : les réponses des personnages sont écrites à la main (pas encore d'agent IA).
-            </p>
         </section>
     );
 };
@@ -156,28 +182,40 @@ export const ChatLog = ({ entries, characters, typing }: ChatLogProps) => {
 /* Zone de réponse                                                     */
 /* ------------------------------------------------------------------ */
 
+/**
+ * - `continue`    : il reste des répliques à lire (Entrée / clic) ;
+ * - `replies`     : à toi : trois réponses prêtes + ta propre réponse ;
+ * - `thinking`    : le personnage réfléchit ;
+ * - `consequence` : carte de conséquence, puis personne suivante.
+ */
+export type ReplyMode = "continue" | "replies" | "thinking" | "consequence";
+
 interface ReplyPickerProps {
-    step: Step;
-    /** Interlocuteur actuel (pour « Marc écrit… »). */
+    mode: ReplyMode;
+    /** Interlocuteur actuel (pour « Marc réfléchit… »). */
     speakerName: string;
     replies: { id: string; label: string }[];
     supportsFreeText: boolean;
+    /** Précision affichée sous le champ libre (ex. limites du scénario local). */
+    freeTextHint?: string;
     error: string | null;
     /** `true` s'il reste une rencontre ; sinon le bouton mène au bilan. */
     hasNext: boolean;
+    consequence?: ConsequenceCardProps | null;
     onChoose: (optionId: string, label: string) => void;
     onFree: (text: string) => void;
+    onContinue: () => void;
     onNext: () => void;
 }
 
-export const ReplyPicker = ({ step, speakerName, replies, supportsFreeText, error, hasNext, onChoose, onFree, onNext }: ReplyPickerProps) => {
+export const ReplyPicker = ({ mode, speakerName, replies, supportsFreeText, freeTextHint, error, hasNext, consequence, onChoose, onFree, onContinue, onNext }: ReplyPickerProps) => {
     const { active: guideActive } = useGuide();
     const [text, setText] = useState("");
     const nextRef = useRef<HTMLButtonElement>(null);
 
     // Raccourcis : 1, 2, 3… choisissent la réponse correspondante (pas pendant la visite guidée).
     useEffect(() => {
-        if (step !== "asking" || guideActive) return;
+        if (mode !== "replies" || guideActive) return;
         const onKey = (event: KeyboardEvent) => {
             if (event.ctrlKey || event.metaKey || event.altKey) return;
             const target = event.target as { tagName?: string } | null;
@@ -190,23 +228,38 @@ export const ReplyPicker = ({ step, speakerName, replies, supportsFreeText, erro
         };
         window.addEventListener("keydown", onKey);
         return () => window.removeEventListener("keydown", onKey);
-    }, [step, guideActive, replies, onChoose]);
+    }, [mode, guideActive, replies, onChoose]);
 
-    // Le bouton « Continuer » prend le focus : Entrée suffit pour enchaîner.
+    // « Personne suivante » prend le focus : Entrée suffit pour enchaîner.
     useEffect(() => {
-        if (step === "reacted" && !guideActive) nextRef.current?.focus({ preventScroll: true });
-    }, [step, guideActive]);
+        if (mode === "consequence" && !guideActive) nextRef.current?.focus({ preventScroll: true });
+    }, [mode, guideActive]);
+
+    // Le texte libre reste en place si le scénario ne l'a pas compris ; il se vide une fois la réponse prise en compte.
+    useEffect(() => {
+        if (mode === "consequence") setText("");
+    }, [mode]);
 
     const submitFree = (event: FormEvent) => {
         event.preventDefault();
         if (!text.trim()) return;
         onFree(text);
-        setText("");
     };
 
     return (
         <section className={`${SURFACE} p-4`} aria-label="Ta réponse">
-            {step === "asking" && (
+            {mode === "continue" && (
+                <button
+                    type="button"
+                    onClick={onContinue}
+                    className={`${BTN_DARK} flex w-full items-center justify-center gap-2 !py-3 text-base`}
+                >
+                    Suite <ChevronRight size={18} />
+                    <kbd className="rounded bg-white/15 px-1.5 py-0.5 font-mono text-[10px] font-bold">Entrée</kbd>
+                </button>
+            )}
+
+            {mode === "replies" && (
                 <>
                     <p className={`${LABEL} mb-3`}>TA RÉPONSE</p>
                     {error && (
@@ -231,37 +284,47 @@ export const ReplyPicker = ({ step, speakerName, replies, supportsFreeText, erro
                         ))}
                     </ul>
                     {supportsFreeText && (
-                        <form onSubmit={submitFree} className="mt-3 flex gap-2">
-                            <input
-                                value={text}
-                                onChange={(event) => setText(event.target.value)}
-                                aria-label="Écris ta propre réponse"
-                                placeholder="Ou écris ta propre réponse…"
-                                className={`${SURFACE_INNER} min-w-0 flex-1 px-3 py-2 text-base ${FOCUS}`}
-                            />
-                            <button type="submit" disabled={!text.trim()} className={`${BTN_DARK} flex items-center gap-2`}>
-                                <Send size={15} /> Envoyer
-                            </button>
+                        <form onSubmit={submitFree} className="mt-4 border-t border-[#ddd2b6] pt-3">
+                            <label htmlFor="free-reply" className={`${LABEL} mb-2 block`}>
+                                OU ÉCRIS TA PROPRE RÉPONSE
+                            </label>
+                            <div className="flex gap-2">
+                                <input
+                                    id="free-reply"
+                                    value={text}
+                                    onChange={(event) => setText(event.target.value)}
+                                    autoComplete="off"
+                                    placeholder="Avec tes mots…"
+                                    className={`${SURFACE_INNER} min-w-0 flex-1 px-3 py-2.5 text-base ${FOCUS}`}
+                                />
+                                <button type="submit" disabled={!text.trim()} className={`${BTN_DARK} flex items-center gap-2`}>
+                                    <Send size={15} /> Envoyer
+                                </button>
+                            </div>
+                            {freeTextHint && <p className="mt-2 text-xs text-[#8b8570]">{freeTextHint}</p>}
                         </form>
                     )}
                 </>
             )}
 
-            {step === "thinking" && (
+            {mode === "thinking" && (
                 <p className={`py-3 text-center text-sm ${MUTED}`} aria-live="polite">
                     {speakerName} réfléchit à ta réponse…
                 </p>
             )}
 
-            {step === "reacted" && (
-                <button
-                    ref={nextRef}
-                    type="button"
-                    onClick={onNext}
-                    className={`${BTN_DARK} flex w-full items-center justify-center gap-2 !bg-[#e0b252] !py-3 text-base !text-[#14171a] hover:!bg-[#efc566]`}
-                >
-                    {hasNext ? "Personne suivante" : "Voir le bilan"} <ArrowRight size={18} />
-                </button>
+            {mode === "consequence" && (
+                <div className="space-y-3">
+                    {consequence && <ConsequenceCard {...consequence} />}
+                    <button
+                        ref={nextRef}
+                        type="button"
+                        onClick={onNext}
+                        className={`${BTN_DARK} flex w-full items-center justify-center gap-2 !bg-[#e0b252] !py-3 text-base !text-[#14171a] hover:!bg-[#efc566]`}
+                    >
+                        {hasNext ? "Personne suivante" : "Voir le bilan"} <ArrowRight size={18} />
+                    </button>
+                </div>
             )}
         </section>
     );

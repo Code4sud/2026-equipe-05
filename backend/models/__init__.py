@@ -3,28 +3,28 @@ from pydantic import BaseModel, Field
 
 # --- Existing Models from backend/models.py ---
 class GaugeConfig(BaseModel):
-    id: str
-    nom: str
+    id: str = Field(..., min_length=1)
+    nom: str = Field(..., min_length=1)
     depart: int = Field(..., ge=0, le=100)
-    seuil_echec: Optional[int] = None
-    seuil_victoire: Optional[int] = None
+    seuil_echec: Optional[int] = Field(default=None, ge=0, le=100)
+    seuil_victoire: Optional[int] = Field(default=None, ge=0, le=100)
 
 class PersonaConfig(BaseModel):
-    nom_role: str
-    ton: str
-    premier_message: str
+    nom_role: str = Field(..., min_length=1)
+    ton: str = Field(..., min_length=1)
+    premier_message: str = Field(..., min_length=1)
 
 class Scenario(BaseModel):
-    scenario_id: str
-    titre_metier: str
-    secteur: str
-    contexte: str
-    objectif_etudiant: str
-    tours_max: int = 10
+    scenario_id: str = Field(..., min_length=1)
+    titre_metier: str = Field(..., min_length=1)
+    secteur: str = Field(..., min_length=1)
+    contexte: str = Field(..., min_length=1)
+    objectif_etudiant: str = Field(..., min_length=1)
+    tours_max: int = Field(default=10, ge=1, le=50)
     persona: PersonaConfig
     regles_evaluation: Optional[str] = ""
-    jauges: List[GaugeConfig]
-    propositions_depart: List[str]
+    jauges: List[GaugeConfig] = Field(..., min_length=1)
+    propositions_depart: List[str] = Field(..., min_length=1)
     system_prompt_agent_2: Optional[str] = None
 
 class AgentTurnResponse(BaseModel):
@@ -38,15 +38,15 @@ class AgentTurnResponse(BaseModel):
 
 class ScenarioCreateRequest(BaseModel):
     scenario_id: Optional[str] = None
-    titre_metier: str
-    secteur: str
-    contexte: str
-    objectif_etudiant: str
-    tours_max: int = 10
+    titre_metier: str = Field(..., min_length=1)
+    secteur: str = Field(..., min_length=1)
+    contexte: str = Field(..., min_length=1)
+    objectif_etudiant: str = Field(..., min_length=1)
+    tours_max: int = Field(default=10, ge=1, le=50)
     persona: PersonaConfig
     regles_evaluation: Optional[str] = ""
-    jauges: List[GaugeConfig]
-    propositions_depart: List[str]
+    jauges: List[GaugeConfig] = Field(..., min_length=1)
+    propositions_depart: List[str] = Field(..., min_length=1)
     system_prompt_agent_2: Optional[str] = None
 
 class TurnRequest(BaseModel):

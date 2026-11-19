@@ -1,0 +1,35 @@
+{
+  "scenario_id": "dev_web_junior",
+  "titre_metier": "Développeur Web & Applications",
+  "secteur": "Numérique & Informatique",
+  "contexte": "Vous venez d'intégrer une équipe tech en tant que développeur junior. À quelques heures d'une mise à jour majeure de la plateforme e-commerce, plusieurs clients signalent un blocage lors du paiement avec une erreur 500. Votre lead développeuse compte sur vous pour mener le diagnostic méthodiquement et déployer un correctif sans perturber le service.",
+  "objectif_etudiant": "Analyser les journaux d'erreurs (logs), localiser l'anomalie dans le code, communiquer avec sérénité avec votre responsable et tester votre correctif avant la mise en production.",
+  "tours_max": 6,
+  "persona": {
+    "nom_role": "Léa - Lead Développeuse",
+    "ton": "Bienveillante, pédagogue, calme et rigoureuse sur les bonnes pratiques de test et de sécurité",
+    "premier_message": "Salut et bienvenue dans l'équipe ! On a un incident prioritaire : les paiements échouent par intermittence depuis ce matin avec un code 500. Avant de toucher au code en direct, par quoi préconises-tu de commencer ?"
+  },
+  "regles_evaluation": "Récompenser l'analyse méthodique des logs, la reproduction du bug en environnement local, les tests unitaires et la transparence avec l'équipe. Sanctionner les modifications directes sur le serveur de production sans test ou les suppositions hasardeuses.",
+  "jauges": [
+    {
+      "id": "qualite_code",
+      "nom": "Rigueur & Méthode Technique",
+      "depart": 60,
+      "seuil_echec": 20,
+      "seuil_victoire": 85
+    },
+    {
+      "id": "communication_equipe",
+      "nom": "Esprit d'Équipe & Sérénité",
+      "depart": 60,
+      "seuil_echec": 20,
+      "seuil_victoire": 85
+    }
+  ],
+  "propositions_depart": [
+    "Je consulte d'abord les journaux d'erreurs (logs) pour identifier la ligne exacte et la cause de l'exception 500.",
+    "Je désactive immédiatement le bouton de paiement pour éviter que d'autres clients ne rencontrent l'erreur.",
+    "Je modifie directement le code sur le serveur de production pour tester rapidement une correction."
+  ]
+}

@@ -6,6 +6,7 @@ import { ScenarioStudio } from './components/ScenarioStudio';
 import { GameStage } from './components/GameStage';
 import { Loader2, AlertCircle } from 'lucide-react';
 import { GameplayPrototype } from "./components/gameplay/GameplayPrototype";
+import { DESK, TONE } from "./components/gameplay/ui";
 
 export function App() {
   const [view, setView] = useState<'catalog' | 'studio' | 'game'>('catalog');
@@ -70,7 +71,7 @@ export function App() {
   };
 
   const handleScenarioCreated = (newScenario: Scenario) => {
-    setScenarios([...scenarios, newScenario]);
+    setScenarios(current => [...current, newScenario]);
     setView('catalog');
   };
 // Prototype gameplay indépendant : aucune connexion au backend.
@@ -80,21 +81,21 @@ export function App() {
 
   if (loadingScenarios) {
     return (
-      <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col items-center justify-center space-y-4">
-        <Loader2 className="w-10 h-10 animate-spin text-indigo-500" />
-        <p className="text-slate-400 text-sm font-medium">Chargement d'Agora Roleplay Studio...</p>
+      <div className={`min-h-screen ${DESK} flex flex-col items-center justify-center space-y-4`}>
+        <Loader2 className="w-10 h-10 animate-spin text-[#e0b252]" />
+        <p className="text-[#a39d8a] text-sm font-medium">Chargement d'Agora Explorer...</p>
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-100 font-sans">
+    <div className={`min-h-screen ${DESK} font-sans selection:bg-[#e0b252] selection:text-[#14171a]`}>
       {error && (
-        <div className="bg-rose-500/10 border-b border-rose-500/30 px-6 py-3 flex items-center justify-between text-rose-400 text-xs">
+        <div className={`border-b px-6 py-2.5 flex items-center justify-between text-xs font-semibold ${TONE.bad.border} ${TONE.bad.bg} ${TONE.bad.text}`}>
           <span className="flex items-center gap-2">
             <AlertCircle className="w-4 h-4 flex-shrink-0" /> {error}
           </span>
-          <button onClick={() => setError(null)} className="underline hover:text-white">Fermer</button>
+          <button onClick={() => setError(null)} className="underline hover:opacity-80">Fermer</button>
         </div>
       )}
 
@@ -119,6 +120,7 @@ export function App() {
           session={session}
           latestTurn={latestTurn}
           onSendTurn={handleSendTurn}
+          onRestart={() => handleStartSimulation(session.scenario_id)}
           onQuit={() => {
             setSession(null);
             setLatestTurn(null);

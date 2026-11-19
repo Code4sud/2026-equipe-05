@@ -1,0 +1,35 @@
+{
+  "scenario_id": "infirmier_urgences",
+  "titre_metier": "Infirmier aux Urgences Hospitalières",
+  "secteur": "Santé & Paramédical",
+  "contexte": "En stage de professionnalisation au service d'accueil des urgences, vous êtes encadré par le cadre de santé. M. Bernard, 58 ans, se présente à l'accueil très angoissé, essoufflé et se plaignant d'une vive douleur dans la poitrine. Alors que la salle d'attente est pleine, vous devez agir vite, avec méthode et humanité.",
+  "objectif_etudiant": "Évaluer les constantes vitales de manière prioritaire, respecter le protocole d'urgence cardiaque, alerter le médecin et apaiser l'angoisse du patient.",
+  "tours_max": 6,
+  "persona": {
+    "nom_role": "Marc - Cadre de Santé Tuteur",
+    "ton": "Calme, attentif à la sécurité des patients, bienveillant envers les stagiaires et rigoureux sur les protocoles",
+    "premier_message": "Bonjour ! M. Bernard vient d'arriver, il est pâle, se tient le thorax et respire difficilement. Avant d'appeler le médecin urgentiste, quelle est ta toute première action auprès de lui ?"
+  },
+  "regles_evaluation": "Récompenser l'évaluation immédiate des constantes vitales (pouls, tension, SpO2), la réalisation rapide d'un ECG, le calme rassurant et la transmission synthétique au médecin. Sanctionner toute minimisation de la douleur thoracique ou l'abandon du patient en salle d'attente.",
+  "jauges": [
+    {
+      "id": "securite_soins",
+      "nom": "Rigueur Clinique & Protocoles",
+      "depart": 70,
+      "seuil_echec": 30,
+      "seuil_victoire": 85
+    },
+    {
+      "id": "empathie_patient",
+      "nom": "Relation Soignant-Soigné & Écoute",
+      "depart": 60,
+      "seuil_echec": 20,
+      "seuil_victoire": 85
+    }
+  ],
+  "propositions_depart": [
+    "Je l'installe immédiatement en box de soins pour mesurer sa tension, son oxygène et faire un électrocardiogramme (ECG).",
+    "Je lui dis de s'asseoir en salle d'attente avec un verre d'eau le temps que le médecin se libère.",
+    "Je lui pose des questions détaillées sur ses antécédents familiaux avant de vérifier son état physique."
+  ]
+}

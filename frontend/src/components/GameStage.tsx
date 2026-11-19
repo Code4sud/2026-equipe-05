@@ -1,7 +1,30 @@
-import React, { useState } from 'react';
-import { SessionState, AgentTurnResponse } from '../types';
-import { CharacterAvatar } from './CharacterAvatar';
-import { Send, ArrowLeft, Trophy, AlertTriangle, Shield, Award, RotateCcw, Sparkles, HelpCircle } from 'lucide-react';
+import React, { useState, useEffect, useMemo, useCallback } from "react";
+import type { FC } from "react";
+import { AlertTriangle, Trophy, Shield, Award, Sparkles, HardHat, MessageSquare } from "lucide-react";
+import { SessionState, AgentTurnResponse } from "../types";
+import { TopBar } from "./gameplay/TopBar";
+import { BriefingScreen } from "./gameplay/BriefingScreen";
+import { DebriefScreen } from "./gameplay/DebriefScreen";
+import { MissionPanel } from "./gameplay/MissionPanel";
+import { StatusIndicators } from "./gameplay/StatusIndicators";
+import { DialogueStage } from "./gameplay/DialogueStage";
+import { ChatLog, ReplyPicker } from "./gameplay/ChatPanel";
+import type { ReplyMode } from "./gameplay/ChatPanel";
+import { GuideProvider, GuideZone } from "./gameplay/guide";
+import { useTypewriter } from "./gameplay/hooks";
+import { DESK, SURFACE, LABEL } from "./gameplay/ui";
+import type {
+  Character,
+  IndicatorView,
+  ChatEntry,
+  Expression,
+  Tone,
+  JournalEntry,
+  DebriefContent,
+  DebriefSkill,
+  EndResult,
+  BriefingContent,
+} from "./gameplay/types";
 
 interface GameStageProps {
   session: SessionState;
@@ -9,273 +32,460 @@ interface GameStageProps {
   onSendTurn: (message: string) => Promise<void>;
   onQuit: () => void;
   loading: boolean;
+  onRestart?: () => void;
 }
 
-export const GameStage: React.FC<GameStageProps> = ({ session, latestTurn, onSendTurn, onQuit, loading }) => {
-  const [inputMessage, setInputMessage] = useState<string>("");
-  const [lastDeltas, setLastDeltas] = useState<Record<string, number>>({});
+export const GameStage: FC<GameStageProps> = ({
+  session,
+  latestTurn,
+  onSendTurn,
+  onQuit,
+  loading,
+  onRestart,
+}) => {
+  // Phase: briefing (intro) -> playing (turns) -> debrief (bilan)
+  const [phase, setPhase] = useState<"briefing" | "playing" | "debrief">(() => {
+    if (session.statut !== "EN_COURS") return "debrief";
+    if (session.tour_actuel === 1 && session.historique.length <= 1) return "briefing";
+    return "playing";
+  });
 
-  const handleChoiceClick = async (choiceText: string) => {
-    if (loading || session.statut !== "EN_COURS") return;
-    if (latestTurn?.deltas_jauges) {
-      setLastDeltas(latestTurn.deltas_jauges);
-    }
-    await onSendTurn(choiceText);
-  };
+  // Consequence display state between turns
+  const [showingConsequence, setShowConsequence] = useState<boolean>(false);
+  const [lastPlayerReply, setLastPlayerReply] = useState<string | null>(null);
+  const [journal, setJournal] = useState<JournalEntry[]>([]);
 
-  const handleCustomSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!inputMessage.trim() || loading || session.statut !== "EN_COURS") return;
-    const msg = inputMessage;
-    setInputMessage("");
-    if (latestTurn?.deltas_jauges) {
-      setLastDeltas(latestTurn.deltas_jauges);
-    }
-    await onSendTurn(msg);
-  };
-
+  // When session status changes to VICTOIRE/DEFAITE, automatically allow debrief transition
   const isGameOver = session.statut !== "EN_COURS";
 
+  // Map humeur_avatar to Expression
+  const avatarExpression: Expression = useMemo(() => {
+    if (loading) return "thinking";
+    const mood = latestTurn?.humeur_avatar;
+    if (mood === "happy") return "happy";
+    if (mood === "angry") return "angry";
+    return "neutral";
+  }, [loading, latestTurn?.humeur_avatar]);
+
+  // Character model
+  const character: Character = useMemo(() => {
+    return {
+      id: "persona",
+      name: session.scenario.persona.nom_role,
+      role: session.scenario.titre_metier,
+      expression: avatarExpression,
+      dialogue: latestTurn?.replique_bulle || session.scenario.persona.premier_message,
+      status: loading ? "listening" : "speaking",
+    };
+  }, [session.scenario, avatarExpression, latestTurn?.replique_bulle, loading]);
+
+  // Indicators views computed from session jauges and current state
+  const indicators: IndicatorView[] = useMemo(() => {
+    return session.scenario.jauges.map((g) => {
+      const val = session.jauges_actuelles[g.id] ?? g.depart;
+      const delta = latestTurn?.deltas_jauges?.[g.id] ?? 0;
+
+      let level: Tone = "neutral";
+      if (g.seuil_victoire !== undefined && g.seuil_victoire !== null && val >= g.seuil_victoire) {
+        level = "good";
+      } else if (g.seuil_echec !== undefined && g.seuil_echec !== null && val <= g.seuil_echec + 10) {
+        level = "bad";
+      } else if (val >= 60) {
+        level = "good";
+      } else if (val >= 35) {
+        level = "warn";
+      } else {
+        level = "bad";
+      }
+
+      let iconKey = "gauge";
+      const lower = (g.nom + " " + g.id).toLowerCase();
+      if (lower.includes("secur") || lower.includes("epi") || lower.includes("protect")) iconKey = "shield";
+      else if (lower.includes("temp") || lower.includes("time") || lower.includes("chron")) iconKey = "alert";
+      else if (lower.includes("relat") || lower.includes("comm") || lower.includes("nego")) iconKey = "handshake";
+
+      return {
+        id: g.id,
+        label: g.nom,
+        meaning: `Jauge de ${g.nom} (départ: ${g.depart}%, seuil échec: ${g.seuil_echec ?? "aucun"}, victoire: ${g.seuil_victoire ?? "aucun"})`,
+        icon: iconKey,
+        value: val,
+        percent: Math.max(0, Math.min(100, val)),
+        display: `${val}%`,
+        level,
+        deltaLabel: delta !== 0 ? `${delta > 0 ? "+" : "−"}${Math.abs(delta)}` : undefined,
+        deltaTone: delta > 0 ? "good" : delta < 0 ? "bad" : undefined,
+      };
+    });
+  }, [session.scenario.jauges, session.jauges_actuelles, latestTurn?.deltas_jauges]);
+
+  // Speech bubble text with typewriter animation
+  const speechText = latestTurn?.replique_bulle || session.scenario.persona.premier_message;
+  const typing = useTypewriter(speechText, true);
+
+  // Chat entries built from backend session.historique
+  const chatEntries: ChatEntry[] = useMemo(() => {
+    let id = 1;
+    const entries: ChatEntry[] = [
+      {
+        id: id++,
+        kind: "scene",
+        time: `Tour 1`,
+        text: session.scenario.titre_metier,
+      },
+    ];
+
+    session.historique.forEach((h, index) => {
+      const isAvatar = h.role === "avatar" || h.role === "assistant";
+      entries.push({
+        id: id++,
+        kind: "say",
+        speakerId: isAvatar ? "persona" : "player",
+        text: h.content,
+        expression: isAvatar ? "neutral" : undefined,
+      });
+
+      // Insert consequence if latest turn matches
+      if (isAvatar && index > 0 && latestTurn?.explication_pedagogique) {
+        const deltaList = Object.entries(latestTurn.deltas_jauges || {})
+          .filter(([, d]) => d !== 0)
+          .map(([gid, d]) => {
+            const jauge = session.scenario.jauges.find((j) => j.id === gid);
+            return { label: jauge?.nom || gid, delta: d };
+          });
+        entries.push({
+          id: id++,
+          kind: "consequence",
+          tone: latestTurn.echec_critique ? "bad" : "neutral",
+          title: latestTurn.echec_critique ? "Échec critique" : "Analyse pédagogique",
+          text: latestTurn.explication_pedagogique,
+          deltas: deltaList,
+        });
+      }
+    });
+
+    return entries;
+  }, [session.historique, session.scenario, latestTurn]);
+
+  // Reply choices
+  const replies = useMemo(() => {
+    const list =
+      latestTurn?.propositions_suivantes && latestTurn.propositions_suivantes.some((p) => p.trim())
+        ? latestTurn.propositions_suivantes.filter((p) => p.trim())
+        : session.scenario.propositions_depart || [];
+
+    return list.map((item, index) => ({
+      id: `opt-${index}`,
+      label: item,
+    }));
+  }, [latestTurn?.propositions_suivantes, session.scenario.propositions_depart]);
+
+  // Reply mode for ReplyPicker
+  let mode: ReplyMode;
+  if (loading) {
+    mode = "thinking";
+  } else if (showingConsequence && latestTurn?.explication_pedagogique) {
+    mode = "consequence";
+  } else if (!typing.done) {
+    mode = "continue";
+  } else {
+    mode = "replies";
+  }
+
+  // Handle Player Choosing or Submitting Free Text
+  const handleChooseReply = useCallback(
+    async (optionId: string, label: string) => {
+      if (loading || isGameOver) return;
+      setLastPlayerReply(label);
+      setShowConsequence(true);
+      await onSendTurn(label);
+      setJournal((prev) => [
+        ...prev,
+        {
+          id: prev.length + 1,
+          time: `Tour ${session.tour_actuel}`,
+          label: session.scenario.persona.nom_role,
+          text: label,
+          tone: "neutral",
+        },
+      ]);
+    },
+    [loading, isGameOver, onSendTurn, session.tour_actuel, session.scenario.persona.nom_role]
+  );
+
+  const handleFreeReply = useCallback(
+    async (text: string) => {
+      if (!text.trim() || loading || isGameOver) return;
+      setLastPlayerReply(text);
+      setShowConsequence(true);
+      await onSendTurn(text);
+      setJournal((prev) => [
+        ...prev,
+        {
+          id: prev.length + 1,
+          time: `Tour ${session.tour_actuel}`,
+          label: session.scenario.persona.nom_role,
+          text: text,
+          tone: "neutral",
+        },
+      ]);
+    },
+    [loading, isGameOver, onSendTurn, session.tour_actuel, session.scenario.persona.nom_role]
+  );
+
+  // Advance from consequence card to next turn or to debrief
+  const handleNextTurn = useCallback(() => {
+    if (isGameOver) {
+      setPhase("debrief");
+      return;
+    }
+    setShowConsequence(false);
+  }, [isGameOver]);
+
+  // Briefing Content
+  const briefingContent: BriefingContent = useMemo(() => {
+    return {
+      eyebrow: session.scenario.secteur,
+      headline: session.scenario.titre_metier,
+      narrative: [
+        session.scenario.contexte,
+        `Ton interlocuteur principal sera ${session.scenario.persona.nom_role} (ton : ${session.scenario.persona.ton}).`,
+      ],
+      roleSummary: `Vous disposez d'un maximum de ${session.scenario.tours_max} tours d'échanges pour atteindre les objectifs professionnels tout en maintenant les jauges au-dessus des seuils d'échec.`,
+      objectives: [session.scenario.objectif_etudiant],
+    };
+  }, [session.scenario]);
+
+  // Debrief Content
+  const debriefContent: DebriefContent = useMemo(() => {
+    const isWin = session.statut === "VICTOIRE";
+    const headline = isWin ? "Mission accomplie !" : "Fin de simulation";
+    const summary =
+      session.message_fin ||
+      (isWin
+        ? "Félicitations ! Vous avez atteint les objectifs de la simulation professionnelle avec succès."
+        : "La simulation s'est terminée sans valider l'ensemble des critères professionnels requis.");
+
+    const skills: DebriefSkill[] = session.scenario.jauges.map((g) => {
+      const val = session.jauges_actuelles[g.id] ?? g.depart;
+      let comment = `Niveau final : ${val}%.`;
+      if (g.seuil_victoire && val >= g.seuil_victoire) {
+        comment += ` Seuil de victoire (${g.seuil_victoire}%) atteint !`;
+      } else if (g.seuil_echec && val <= g.seuil_echec) {
+        comment += ` Seuil critique d'échec (${g.seuil_echec}%) franchi.`;
+      }
+      return {
+        label: g.nom,
+        score: val,
+        comment,
+      };
+    });
+
+    const insights = [
+      `Secteur : ${session.scenario.secteur}`,
+      `Règle clé : ${session.scenario.regles_evaluation || "Rigueur professionnelle et respect des consignes"}`,
+      `Interlocuteur : ${session.scenario.persona.nom_role}`,
+    ];
+
+    return {
+      headline,
+      summary,
+      skills,
+      insights,
+    };
+  }, [session]);
+
+  const endResult: EndResult = useMemo(() => {
+    return {
+      status: session.statut === "VICTOIRE" ? "success" : "failure",
+      reason: session.message_fin || (session.statut === "VICTOIRE" ? "Objectif validé" : "Échec des critères"),
+    };
+  }, [session.statut, session.message_fin]);
+
+  // Progress object
+  const progress = useMemo(() => {
+    const isWin = session.statut === "VICTOIRE";
+    return {
+      done: isWin ? 1 : 0,
+      total: 1,
+      objectives: [
+        {
+          id: "obj-1",
+          label: session.scenario.objectif_etudiant,
+          done: isWin,
+        },
+      ],
+    };
+  }, [session.statut, session.scenario.objectif_etudiant]);
+
+  // Consequence payload
+  const consequenceData = useMemo(() => {
+    if (!latestTurn?.explication_pedagogique) return null;
+    const deltas = Object.entries(latestTurn.deltas_jauges || {})
+      .filter(([, d]) => d !== 0)
+      .map(([gid, d]) => {
+        const jauge = session.scenario.jauges.find((j) => j.id === gid);
+        return { label: jauge?.nom || gid, delta: d };
+      });
+
+    const hasPositive = Object.values(latestTurn.deltas_jauges || {}).some((d) => d > 0);
+    const hasNegative = Object.values(latestTurn.deltas_jauges || {}).some((d) => d < 0);
+    const tone: Tone = latestTurn.echec_critique ? "bad" : hasPositive ? "good" : hasNegative ? "warn" : "neutral";
+
+    return {
+      tone,
+      title: latestTurn.echec_critique ? "Échec critique" : "Analyse pédagogique",
+      text: latestTurn.explication_pedagogique,
+      deltas,
+      metier: session.scenario.secteur,
+    };
+  }, [latestTurn, session.scenario]);
+
+  const header = (
+    <TopBar
+      missionTitle={session.scenario.titre_metier}
+      timeLabel={`Tour ${session.tour_actuel}/${session.scenario.tours_max}`}
+      finished={session.statut !== "EN_COURS"}
+      progress={progress}
+      onQuit={onQuit}
+      onRestart={onRestart ?? onQuit}
+    />
+  );
+
+  // 1. Briefing Phase
+  if (phase === "briefing") {
+    return (
+      <div className={`min-h-screen ${DESK}`}>
+        {header}
+        <BriefingScreen
+          briefing={briefingContent}
+          role={session.scenario.persona.nom_role}
+          location={session.scenario.contexte}
+          characters={[character]}
+          onStart={() => setPhase("playing")}
+        />
+      </div>
+    );
+  }
+
+  // 2. Debrief Phase
+  if (phase === "debrief") {
+    return (
+      <div className={`min-h-screen ${DESK}`}>
+        {header}
+        <DebriefScreen
+          result={endResult}
+          content={debriefContent}
+          indicators={indicators}
+          journal={journal}
+          onRestart={onRestart ?? onQuit}
+          onQuit={onQuit}
+        />
+      </div>
+    );
+  }
+
+  // 3. Playing Phase
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col justify-between p-4 md:p-8 relative overflow-hidden">
-      {/* Background ambient lighting */}
-      <div className="absolute top-1/4 left-1/2 -translate-x-1/2 w-[600px] h-[600px] bg-indigo-600/5 rounded-full blur-3xl pointer-events-none"></div>
+    <GuideProvider value={{ active: false, targetId: null }}>
+      <div className={`min-h-screen ${DESK}`}>
+        {header}
 
-      {/* Top Navigation / Status bar */}
-      <header className="max-w-6xl w-full mx-auto flex justify-between items-center bg-slate-900/80 border border-slate-800 px-6 py-4 rounded-2xl backdrop-blur-md shadow-xl z-10">
-        <div className="flex items-center gap-4">
-          <button
-            onClick={onQuit}
-            className="flex items-center gap-2 px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-medium rounded-xl border border-slate-700 transition-all"
-          >
-            <ArrowLeft className="w-4 h-4" /> Quitter
-          </button>
-          <div>
-            <h1 className="text-sm font-bold text-white flex items-center gap-2">
-              <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
-              {session.scenario.titre_metier}
-            </h1>
-            <p className="text-[11px] text-slate-400">Tour {session.tour_actuel} / {session.scenario.tours_max}</p>
-          </div>
-        </div>
+        {/* Conteneur optimisé : marges réduites, pleine largeur et hauteur contrôlée sans scroll obligatoire */}
+        <div className="mx-auto max-w-[1600px] w-full px-2 sm:px-4 md:px-6 py-2 sm:py-3 space-y-2.5">
+          {/* Status Indicators / Jauges en bandeau fin pleine largeur */}
+          <GuideZone id="status" label="tes jauges">
+            <StatusIndicators indicators={indicators} />
+          </GuideZone>
 
-        <div className="flex items-center gap-3">
-          <span className="px-3 py-1 bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 rounded-full text-xs font-semibold">
-            {session.scenario.secteur}
-          </span>
-        </div>
-      </header>
-
-      {/* Main Game Grid */}
-      <main className="max-w-6xl w-full mx-auto grid grid-cols-1 lg:grid-cols-4 gap-6 my-6 z-10 flex-1 items-center">
-        
-        {/* Left Column: Mission & Gauges */}
-        <div className="lg:col-span-1 space-y-6">
-          {/* Mission Card */}
-          <div className="bg-slate-900/80 border border-slate-800 p-5 rounded-2xl shadow-lg backdrop-blur-md">
-            <h3 className="text-xs font-bold text-indigo-400 uppercase tracking-wider mb-2 flex items-center gap-1.5">
-              <Sparkles className="w-3.5 h-3.5" /> Objectif Mission
-            </h3>
-            <p className="text-xs text-slate-300 leading-relaxed mb-4">
-              {session.scenario.objectif_etudiant}
-            </p>
-            <div className="text-[11px] text-slate-400 bg-slate-950 p-3 rounded-xl border border-slate-800/80">
-              <strong className="text-slate-200 block mb-1">Contexte :</strong>
-              {session.scenario.contexte}
-            </div>
-          </div>
-
-          {/* Gauges Status Card */}
-          <div className="bg-slate-900/80 border border-slate-800 p-5 rounded-2xl shadow-lg backdrop-blur-md space-y-4">
-            <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-3">
-              Indicateurs Clés (Jauges)
-            </h3>
-
-            {session.scenario.jauges.map(gauge => {
-              const val = session.jauges_actuelles[gauge.id] ?? 50;
-              const delta = latestTurn?.deltas_jauges?.[gauge.id];
-
-              let barColor = "bg-indigo-500";
-              if (gauge.seuil_victoire !== undefined && gauge.seuil_victoire !== null && val >= gauge.seuil_victoire) {
-                barColor = "bg-emerald-500";
-              } else if (gauge.seuil_echec !== undefined && gauge.seuil_echec !== null && val <= gauge.seuil_echec + 10) {
-                barColor = "bg-rose-500";
-              }
-
-              return (
-                <div key={gauge.id} className="space-y-1.5">
-                  <div className="flex justify-between items-center text-xs">
-                    <span className="text-slate-300 font-medium flex items-center gap-1.5">
-                      {gauge.seuil_victoire ? <Award className="w-3.5 h-3.5 text-emerald-400" /> : <Shield className="w-3.5 h-3.5 text-indigo-400" />}
-                      {gauge.nom}
-                    </span>
-                    <div className="flex items-center gap-2">
-                      {delta !== undefined && delta !== 0 && (
-                        <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-md ${delta > 0 ? 'bg-emerald-500/20 text-emerald-400' : 'bg-rose-500/20 text-rose-400'}`}>
-                          {delta > 0 ? `+${delta}` : delta}
-                        </span>
-                      )}
-                      <span className="font-mono font-bold text-white">{val}%</span>
-                    </div>
-                  </div>
-
-                  <div className="w-full bg-slate-950 h-2.5 rounded-full overflow-hidden p-0.5 border border-slate-800">
-                    <div
-                      className={`h-full rounded-full transition-all duration-500 ${barColor}`}
-                      style={{ width: `${Math.max(0, Math.min(100, val))}%` }}
-                    ></div>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        </div>
-
-        {/* Center/Right Main Visual Novel Stage */}
-        <div className="lg:col-span-3 flex flex-col justify-center items-center space-y-6 relative">
-          
-          {/* Pedagogical Explanation Box (if available) */}
-<div className="max-w-xl w-full">
-          {latestTurn?.explication_pedagogique && (
-            <div className="w-full bg-indigo-950/40 border border-indigo-500/30 p-4 rounded-2xl shadow-xl backdrop-blur-md flex items-start gap-3">
-              <div className="p-2 bg-indigo-500/20 rounded-xl text-indigo-400 mt-0.5">
-                <HelpCircle className="w-4 h-4" />
-              </div>
-              <div className="flex-1 min-w-0">
-                <span className="text-[11px] font-bold text-indigo-400 uppercase tracking-wider block mb-0.5">
-                  Analyse Pédagogique
-                </span>
-                <p className="text-xs text-slate-300 leading-relaxed">
-                  {latestTurn.explication_pedagogique}
-                </p>
-                {latestTurn.erreur_api && (
-                  <div className="mt-3 p-3 bg-rose-950/80 border border-rose-500/40 rounded-xl text-xs text-rose-300 flex items-start gap-2.5 shadow-lg">
-                    <AlertTriangle className="w-4 h-4 text-rose-400 flex-shrink-0 mt-0.5" />
-                    <div className="flex-1 min-w-0">
-                      <span className="font-semibold text-rose-300 text-[11px] uppercase tracking-wider block mb-1">
-                        Erreur détaillée de communication avec l'API IA (Groq) :
-                      </span>
-                      <div className="font-mono text-[11px] text-rose-200/90 break-words whitespace-pre-wrap bg-slate-950/90 p-2.5 rounded-lg border border-rose-900/60 select-text max-h-48 overflow-y-auto leading-relaxed">
-                        {latestTurn.erreur_api}
-                      </div>
-                    </div>
-                  </div>
-                )}
-              </div>
-            </div>
-          )}
-</div>
-
-          {/* Character Avatar & Dialogue Bubble */}
-          <div className="w-full max-w-2xl flex flex-col md:flex-row items-center gap-6 bg-slate-900/90 border border-slate-800 p-8 rounded-3xl shadow-2xl backdrop-blur-md relative">
-            
-            {/* Avatar */}
-            <div className="flex-shrink-0">
-              <CharacterAvatar
-                humeur={latestTurn?.humeur_avatar || "neutral"}
-                roleName={session.scenario.persona.nom_role}
-              />
-            </div>
-
-            {/* Dialogue Bubble */}
-            <div className="flex-1 bg-slate-950 border border-slate-800 p-6 rounded-2xl relative shadow-inner">
-              <div className="absolute -left-3 top-8 w-0 h-0 border-t-[8px] border-t-transparent border-r-[12px] border-r-slate-950 border-b-[8px] border-b-transparent hidden md:block"></div>
-              
-              <div className="flex items-center justify-between mb-2">
-                <span className="text-xs font-bold text-indigo-400 uppercase tracking-wider">
-                  {session.scenario.persona.nom_role}
-                </span>
-                <span className="text-[10px] text-slate-500 font-mono">
-                  Tour {session.tour_actuel}
-                </span>
-              </div>
-
-              <p className="text-sm md:text-base text-slate-100 leading-relaxed font-medium">
-                {loading ? (
-                  <span className="flex items-center gap-2 text-slate-400 animate-pulse">
-                    <Sparkles className="w-4 h-4 animate-spin text-indigo-400" /> Réflexion de l'expert en cours...
-                  </span>
-                ) : (
-                  `« ${latestTurn?.replique_bulle || session.scenario.persona.premier_message} »`
-                )}
-              </p>
-            </div>
-          </div>
-
-          {/* Game Over / Victory Modal Overlay */}
-          {isGameOver && (
-            <div className="absolute inset-0 bg-slate-950/90 backdrop-blur-xl z-30 flex items-center justify-center p-6 rounded-3xl animate-fadeIn">
-              <div className="max-w-md w-full bg-slate-900 border border-slate-800 p-8 rounded-3xl shadow-2xl text-center space-y-6">
-                <div className={`w-20 h-20 mx-auto rounded-full flex items-center justify-center ${session.statut === "VICTOIRE" ? 'bg-emerald-500/20 border border-emerald-500/40 text-emerald-400' : 'bg-rose-500/20 border border-rose-500/40 text-rose-400'}`}>
-                  {session.statut === "VICTOIRE" ? <Trophy className="w-10 h-10" /> : <AlertTriangle className="w-10 h-10" />}
-                </div>
-
-                <div>
-                  <h2 className={`text-2xl font-extrabold mb-2 ${session.statut === "VICTOIRE" ? 'text-emerald-400' : 'text-rose-400'}`}>
-                    {session.statut === "VICTOIRE" ? "MISSION ACCOMPLIE !" : "MISSION ÉCHOUÉE"}
-                  </h2>
-                  <p className="text-slate-300 text-sm leading-relaxed mb-4">
-                    {session.message_fin || "La simulation est arrivée à son terme."}
-                  </p>
-                </div>
-
-                <button
-                  onClick={onQuit}
-                  className="w-full flex items-center justify-center gap-2 py-3 bg-indigo-600 hover:bg-indigo-500 text-white font-medium rounded-xl transition-all shadow-lg shadow-indigo-600/20"
-                >
-                  <RotateCcw className="w-4 h-4" /> Retour au catalogue
-                </button>
-              </div>
-            </div>
-          )}
-
-        </div>
-      </main>
-
-      {/* Bottom Area: Clickable Choices + Free Text Input */}
-      <footer className="max-w-4xl w-full mx-auto z-10 space-y-4">
-        {!isGameOver && (
-          <>
-            {/* Clickable Suggestions */}
-            {latestTurn?.propositions_suivantes && latestTurn.propositions_suivantes.length > 0 && (
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                {latestTurn.propositions_suivantes.map((choice, idx) => (
-                  <button
-                    key={idx}
-                    disabled={loading}
-                    onClick={() => handleChoiceClick(choice)}
-                    className="p-3 bg-slate-900/90 hover:bg-indigo-950/60 border border-slate-800 hover:border-indigo-500/50 rounded-xl text-left text-xs text-slate-200 hover:text-white transition-all shadow-md hover:scale-[1.01] active:scale-95 disabled:opacity-50"
-                  >
-                    <span className="text-indigo-400 font-bold mr-1.5">[{idx + 1}]</span>
-                    {choice}
-                  </button>
-                ))}
-              </div>
-            )}
-
-            {/* Custom Free Input Form */}
-            <form onSubmit={handleCustomSubmit} className="flex gap-3">
-              <div className="relative flex-1">
-                <input
-                  type="text"
-                  disabled={loading}
-                  value={inputMessage}
-                  onChange={e => setInputMessage(e.target.value)}
-                  placeholder="Ou écrivez votre propre réponse libre..."
-                  className="w-full bg-slate-900 border border-slate-800 hover:border-slate-700 focus:border-indigo-500 rounded-2xl px-5 py-4 text-sm text-white placeholder-slate-500 focus:outline-none shadow-xl transition-all"
+          <div className="grid grid-cols-1 gap-3 lg:grid-cols-[minmax(0,1fr)_360px] xl:grid-cols-[minmax(0,1fr)_420px]">
+            {/* Colonne GAUCHE : Scène de dialogue & réponses */}
+            <div className="min-w-0 space-y-2.5">
+              <GuideZone id="stage" label="ton interlocuteur">
+                <DialogueStage
+                  character={character}
+                  expression={avatarExpression}
+                  time={`Tour ${session.tour_actuel}`}
+                  place={session.scenario.secteur}
+                  title={session.scenario.titre_metier}
+                  objectiveLabel={session.scenario.objectif_etudiant}
+                  shown={typing.shown}
+                  fullText={speechText}
+                  thinking={loading}
+                  playerText={showingConsequence ? lastPlayerReply : null}
+                  done={typing.done}
+                  more={false}
+                  onAdvance={typing.skip}
                 />
-              </div>
-              <button
-                type="submit"
-                disabled={loading || !inputMessage.trim()}
-                className="px-6 py-4 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white font-medium rounded-2xl flex items-center gap-2 shadow-xl shadow-indigo-600/20 transition-all hover:scale-105 active:scale-95"
-              >
-                <Send className="w-5 h-5" />
-              </button>
-            </form>
-          </>
-        )}
-      </footer>
-    </div>
+              </GuideZone>
+
+              {/* Erreur API Groq éventuelle */}
+              {latestTurn?.erreur_api && (
+                <div className="rounded-lg border-2 border-rose-500/50 bg-rose-950/80 p-3 text-xs text-rose-200 shadow-lg">
+                  <div className="flex items-center gap-2 font-bold text-rose-300 mb-1">
+                    <AlertTriangle className="h-4 w-4 text-rose-400 shrink-0" />
+                    <span>Erreur détaillée de communication avec l'API IA :</span>
+                  </div>
+                  <pre className="font-mono text-[11px] text-rose-100 whitespace-pre-wrap bg-slate-950/80 p-2 rounded border border-rose-900/60 max-h-32 overflow-y-auto">
+                    {latestTurn.erreur_api}
+                  </pre>
+                </div>
+              )}
+
+              {/* Sélecteur de réponse ou conséquences */}
+              <GuideZone id="replies" label="tes réponses">
+                <ReplyPicker
+                  mode={mode}
+                  speakerName={session.scenario.persona.nom_role}
+                  replies={replies}
+                  supportsFreeText={true}
+                  freeTextHint="Réponse libre analysée en direct par l'agent IA."
+                  error={null}
+                  hasNext={!isGameOver}
+                  consequence={consequenceData}
+                  onChoose={handleChooseReply}
+                  onFree={handleFreeReply}
+                  onContinue={typing.skip}
+                  onNext={handleNextTurn}
+                />
+              </GuideZone>
+            </div>
+
+            {/* Colonne DROITE : Historique au-dessus de la Mission */}
+            <aside className="space-y-2.5">
+              {/* Historique de conversation déplacé à droite */}
+              <GuideZone id="chatlog" label="historique des échanges">
+                <section className={`${SURFACE} p-3.5 flex flex-col`} aria-label="Historique de la conversation">
+                  <div className="flex items-center justify-between border-b border-[#ddd2b6] pb-2 mb-2">
+                    <p className={`${LABEL} flex items-center gap-1.5`}>
+                      <MessageSquare size={13} className="text-[#2c5a7a]" />
+                      HISTORIQUE DU DIALOGUE
+                    </p>
+                    <span className="font-mono text-[11px] text-[#6b6657]">
+                      {session.historique.length} messages
+                    </span>
+                  </div>
+                  <div className="max-h-[230px] lg:max-h-[270px] xl:max-h-[300px] overflow-y-auto pr-1">
+                    <ChatLog entries={chatEntries} characters={{ persona: character }} />
+                  </div>
+                </section>
+              </GuideZone>
+
+              {/* Mission & Objectifs placé en dessous de l'historique */}
+              <GuideZone id="mission" label="ta mission">
+                <MissionPanel
+                  title={session.scenario.titre_metier}
+                  role={session.scenario.persona.nom_role}
+                  location={session.scenario.secteur}
+                  objectives={progress.objectives}
+                />
+              </GuideZone>
+            </aside>
+          </div>
+        </div>
+      </div>
+    </GuideProvider>
   );
 };
+
+export default GameStage;

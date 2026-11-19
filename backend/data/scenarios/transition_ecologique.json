@@ -1,0 +1,35 @@
+{
+  "scenario_id": "transition_ecologique",
+  "titre_metier": "Chargé de Mission Transition Écologique",
+  "secteur": "Environnement & RSE",
+  "contexte": "Une entreprise agroalimentaire régionale de 80 salariés vous missionne pour construire sa feuille de route de réduction carbone et de baisse des déchets plastiques. La direction soutient le projet, mais les responsables d'ateliers et les opérateurs craignent des cadences ralenties et des surcoûts impossibles à tenir.",
+  "objectif_etudiant": "Co-construire une démarche écologique pragmatique, écouter les contraintes du terrain, tester des initiatives pilotes et emporter l'adhésion des équipes.",
+  "tours_max": 6,
+  "persona": {
+    "nom_role": "Sarah - Directrice des Opérations",
+    "ton": "Pragmatique, ouverte aux transitions durables mais exigeante sur la rentabilité et le respect des équipes d'atelier",
+    "premier_message": "Bonjour ! Notre conseil d'administration veut supprimer 30% des emballages plastiques d'ici un an. En réunion ce matin, les chefs d'équipe étaient très réticents. Comment abordes-tu le dialogue avec eux pour débloquer la situation ?"
+  },
+  "regles_evaluation": "Récompenser la co-construction, l'écoute des difficultés réelles d'emballage sur machine, le lancement d'ateliers pilotes et le chiffrage réaliste des bénéfices (économies d'énergie). Sanctionner les injonctions descendantes autoritaires ou les promesses écologiques irréalistes.",
+  "jauges": [
+    {
+      "id": "impact_ecologique",
+      "nom": "Ambition & Efficacité Écologique",
+      "depart": 50,
+      "seuil_echec": 20,
+      "seuil_victoire": 85
+    },
+    {
+      "id": "adhesion_terrain",
+      "nom": "Conduite du Changement & Faisabilité",
+      "depart": 50,
+      "seuil_echec": 20,
+      "seuil_victoire": 85
+    }
+  ],
+  "propositions_depart": [
+    "Je propose d'aller sur la ligne de production avec les équipes pour observer les contraintes d'emballage en situation réelle.",
+    "Je leur présente un règlement strict avec des quotas de plastique à respecter obligatoirement dès la semaine prochaine.",
+    "Je propose de lancer un test sur une seule ligne pilote pour mesurer les impacts concrets avant tout déploiement général."
+  ]
+}

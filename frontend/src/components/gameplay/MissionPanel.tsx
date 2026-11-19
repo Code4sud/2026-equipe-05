@@ -10,23 +10,22 @@ interface MissionPanelProps {
 
 /** Ta mission : le rôle et les objectifs, qui se cochent au fil des rencontres. */
 export const MissionPanel = ({ title, role, location, objectives }: MissionPanelProps) => (
-    <section className={`${SURFACE} p-5`} aria-label="Mission">
+    <section className={`${SURFACE} p-3.5`} aria-label="Mission">
         <p className={LABEL}>TA MISSION</p>
-        <h1 className="mt-2 text-lg font-bold leading-tight">{title}</h1>
-        <p className={`mt-1 text-sm leading-snug ${MUTED}`}>{role}</p>
-        <p className={`mt-1 flex items-center gap-1.5 text-sm ${MUTED}`}>
-            <MapPin size={14} /> {location}
+        <h1 className="mt-1 text-base font-bold leading-tight text-[#2b2a26]">{title}</h1>
+        <p className={`mt-0.5 text-xs leading-snug ${MUTED}`}>
+            {role} · {location}
         </p>
 
-        <ul className="mt-4 space-y-3">
+        <ul className="mt-2.5 space-y-2">
             {objectives.map((objective) => (
-                <li key={objective.id} className="flex items-start gap-2.5">
+                <li key={objective.id} className="flex items-start gap-2 text-xs sm:text-sm">
                     {objective.done ? (
-                        <CheckCircle2 size={20} className="mt-0.5 shrink-0 text-[#2f6b3a]" aria-label="Fait" />
+                        <CheckCircle2 size={16} className="mt-0.5 shrink-0 text-[#2f6b3a]" aria-label="Fait" />
                     ) : (
-                        <Circle size={20} className="mt-0.5 shrink-0 text-[#b7ad92]" aria-label="À faire" />
+                        <Circle size={16} className="mt-0.5 shrink-0 text-[#b7ad92]" aria-label="À faire" />
                     )}
-                    <span className={`text-base leading-snug ${objective.done ? "text-[#8b8570] line-through" : "font-medium"}`}>
+                    <span className={`leading-snug ${objective.done ? "text-[#8b8570] line-through" : "font-medium text-[#2b2a26]"}`}>
                         {objective.label}
                     </span>
                 </li>

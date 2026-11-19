@@ -247,12 +247,12 @@ export const ReplyPicker = ({ mode, speakerName, replies, supportsFreeText, free
     };
 
     return (
-        <section className={`${SURFACE} p-4`} aria-label="Ta réponse">
+        <section className={`${SURFACE} p-3.5`} aria-label="Ta réponse">
             {mode === "continue" && (
                 <button
                     type="button"
                     onClick={onContinue}
-                    className={`${BTN_DARK} flex w-full items-center justify-center gap-2 !py-3 text-base`}
+                    className={`${BTN_DARK} flex w-full items-center justify-center gap-2 !py-2.5 text-sm sm:text-base`}
                 >
                     Suite <ChevronRight size={18} />
                     <kbd className="rounded bg-white/15 px-1.5 py-0.5 font-mono text-[10px] font-bold">Entrée</kbd>
@@ -261,21 +261,21 @@ export const ReplyPicker = ({ mode, speakerName, replies, supportsFreeText, free
 
             {mode === "replies" && (
                 <>
-                    <p className={`${LABEL} mb-3`}>TA RÉPONSE</p>
+                    <p className={`${LABEL} mb-2`}>TA RÉPONSE</p>
                     {error && (
-                        <p role="alert" className="mb-3 rounded-md border border-[#e0a8a2] bg-[#f4dad6] px-3 py-2 text-sm text-[#8a2620]">
+                        <p role="alert" className="mb-2 rounded-md border border-[#e0a8a2] bg-[#f4dad6] px-3 py-1.5 text-xs text-[#8a2620]">
                             {error}
                         </p>
                     )}
-                    <ul className="space-y-2.5">
+                    <ul className="space-y-2">
                         {replies.map((reply, index) => (
                             <li key={reply.id}>
                                 <button
                                     type="button"
                                     onClick={() => onChoose(reply.id, reply.label)}
-                                    className={`${SURFACE_INNER} flex w-full items-start gap-3 p-3.5 text-left text-base leading-snug transition-colors hover:border-[#2b2a26] hover:bg-white ${FOCUS}`}
+                                    className={`${SURFACE_INNER} flex w-full items-start gap-2.5 p-2.5 sm:p-3 text-left text-sm sm:text-base leading-snug transition-colors hover:border-[#2b2a26] hover:bg-white ${FOCUS}`}
                                 >
-                                    <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-[#2b2a26] font-mono text-sm font-bold text-[#f3ecd9]">
+                                    <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-[#2b2a26] font-mono text-xs font-bold text-[#f3ecd9]">
                                         {index + 1}
                                     </span>
                                     <span className="pt-0.5">{reply.label}</span>
@@ -284,8 +284,8 @@ export const ReplyPicker = ({ mode, speakerName, replies, supportsFreeText, free
                         ))}
                     </ul>
                     {supportsFreeText && (
-                        <form onSubmit={submitFree} className="mt-4 border-t border-[#ddd2b6] pt-3">
-                            <label htmlFor="free-reply" className={`${LABEL} mb-2 block`}>
+                        <form onSubmit={submitFree} className="mt-3 border-t border-[#ddd2b6] pt-2.5">
+                            <label htmlFor="free-reply" className={`${LABEL} mb-1.5 block`}>
                                 OU ÉCRIS TA PROPRE RÉPONSE
                             </label>
                             <div className="flex gap-2">
@@ -295,13 +295,13 @@ export const ReplyPicker = ({ mode, speakerName, replies, supportsFreeText, free
                                     onChange={(event) => setText(event.target.value)}
                                     autoComplete="off"
                                     placeholder="Avec tes mots…"
-                                    className={`${SURFACE_INNER} min-w-0 flex-1 px-3 py-2.5 text-base ${FOCUS}`}
+                                    className={`${SURFACE_INNER} min-w-0 flex-1 px-3 py-2 text-sm sm:text-base ${FOCUS}`}
                                 />
-                                <button type="submit" disabled={!text.trim()} className={`${BTN_DARK} flex items-center gap-2`}>
-                                    <Send size={15} /> Envoyer
+                                <button type="submit" disabled={!text.trim()} className={`${BTN_DARK} flex items-center gap-1.5 !py-2 text-xs sm:text-sm`}>
+                                    <Send size={14} /> Envoyer
                                 </button>
                             </div>
-                            {freeTextHint && <p className="mt-2 text-xs text-[#8b8570]">{freeTextHint}</p>}
+                            {freeTextHint && <p className="mt-1 text-[11px] text-[#8b8570]">{freeTextHint}</p>}
                         </form>
                     )}
                 </>
@@ -314,15 +314,15 @@ export const ReplyPicker = ({ mode, speakerName, replies, supportsFreeText, free
             )}
 
             {mode === "consequence" && (
-                <div className="space-y-3">
+                <div className="space-y-2.5">
                     {consequence && <ConsequenceCard {...consequence} />}
                     <button
                         ref={nextRef}
                         type="button"
                         onClick={onNext}
-                        className={`${BTN_DARK} flex w-full items-center justify-center gap-2 !bg-[#e0b252] !py-3 text-base !text-[#14171a] hover:!bg-[#efc566]`}
+                        className={`${BTN_DARK} flex w-full items-center justify-center gap-2 !bg-[#e0b252] !py-2.5 text-sm sm:text-base !text-[#14171a] hover:!bg-[#efc566]`}
                     >
-                        {hasNext ? "Personne suivante" : "Voir le bilan"} <ArrowRight size={18} />
+                        {hasNext ? "Étape suivante" : "Voir le bilan"} <ArrowRight size={18} />
                     </button>
                 </div>
             )}

@@ -53,18 +53,29 @@ class GameEngine:
             val = session.jauges_actuelles[gauge.id]
             if gauge.seuil_echec is not None and val <= gauge.seuil_echec:
                 session.statut = "DEFAITE"
-                session.message_fin = f"Jauge critique '{gauge.nom}' tombée sous le seuil d'échec ({val} <= {gauge.seuil_echec})."
+                session.message_fin = f"Critère critique '{gauge.nom}' tombé sous le seuil d'alerte ({val} <= {gauge.seuil_echec})."
                 return session
-            if gauge.seuil_victoire is not None and val >= gauge.seuil_victoire:
-                session.statut = "VICTOIRE"
-                session.message_fin = f"Objectif atteint ! Jauge '{gauge.nom}' a atteint le seuil de victoire ({val} >= {gauge.seuil_victoire})."
-                return session
+
+        # Victoire anticipée : si toutes les jauges à seuil de victoire ont atteint leur cible
+        victory_gauges = [g for g in session.scenario.jauges if g.seuil_victoire is not None]
+        if victory_gauges and all(session.jauges_actuelles[g.id] >= g.seuil_victoire for g in victory_gauges):
+            session.statut = "VICTOIRE"
+            session.message_fin = "Félicitations ! Vous avez atteint l'ensemble des critères de réussite de la mission."
+            return session
 
         # 5. Increment turn or check max tours
         session.tour_actuel += 1
         if session.tour_actuel > session.scenario.tours_max:
-            session.statut = "DEFAITE"
-            session.message_fin = f"Nombre maximal de tours ({session.scenario.tours_max}) atteint sans valider l'objectif."
+            # Évaluation en fin de mission
+            if victory_gauges and all(session.jauges_actuelles[g.id] >= g.seuil_victoire for g in victory_gauges):
+                session.statut = "VICTOIRE"
+                session.message_fin = "Mission accomplie avec succès à l'issue du temps imparti."
+            elif all(session.jauges_actuelles[g.id] >= 60 for g in session.scenario.jauges):
+                session.statut = "VICTOIRE"
+                session.message_fin = "Fin de mission : bilan très honorable, vous avez démontré les compétences clés du métier !"
+            else:
+                session.statut = "DEFAITE"
+                session.message_fin = f"Nombre maximal d'échanges ({session.scenario.tours_max}) atteint sans valider l'ensemble des critères."
             return session
 
         return session

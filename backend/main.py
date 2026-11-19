@@ -1,8 +1,8 @@
 import os
 import json
 from pathlib import Path
-from typing import List
-from fastapi import FastAPI, HTTPException, status
+from typing import List, Any
+from fastapi import FastAPI, HTTPException, status, Body
 from fastapi.middleware.cors import CORSMiddleware
 
 from models import Scenario, ScenarioCreateRequest, TurnRequest, SessionState, AgentTurnResponse
@@ -51,6 +51,26 @@ def get_scenarios():
                 print(f"Error loading {file_path}: {e}")
     return scenarios
 
+@app.post("/api/scenarios/validate")
+def validate_scenario(payload: Any = Body(...)):
+    """Validate an imported scenario JSON without saving it."""
+    try:
+        validated = ScenarioCreateRequest.model_validate(payload)
+        return {"valid": True, "scenario": validated.model_dump(exclude_none=True)}
+    except Exception as exc:
+        from pydantic import ValidationError
+        if isinstance(exc, ValidationError):
+            errors = [
+                {
+                    "field": ".".join(str(part) for part in item["loc"]),
+                    "message": item["msg"],
+                    "type": item["type"],
+                }
+                for item in exc.errors()
+            ]
+            return {"valid": False, "errors": errors}
+        raise HTTPException(status_code=400, detail="Impossible de valider ce scénario.")
+
 @app.post("/api/scenarios", response_model=Scenario, status_code=status.HTTP_201_CREATED)
 def create_scenario(payload: ScenarioCreateRequest):
     scenario_id = payload.scenario_id
@@ -58,12 +78,17 @@ def create_scenario(payload: ScenarioCreateRequest):
         # Generate clean ID from titre_metier
         scenario_id = "".join(c if c.isalnum() else "_" for c in payload.titre_metier.lower())
         scenario_id = f"{scenario_id[:20]}_{os.urandom(2).hex()}"
-    
+    if not scenario_id or any(not (c.isalnum() or c in "_-") for c in scenario_id):
+        raise HTTPException(status_code=422, detail="Identifiant de scénario invalide.")
+
     data = payload.model_dump()
     data["scenario_id"] = scenario_id
     scenario = Scenario(**data)
 
     file_path = SCENARIOS_DIR / f"{scenario_id}.json"
+    if file_path.exists():
+        raise HTTPException(status_code=409, detail="Un scénario avec cet identifiant existe déjà. Modifiez scenario_id avant l'import.")
+
     with open(file_path, "w", encoding="utf-8") as f:
         json.dump(scenario.model_dump(), f, ensure_ascii=False, indent=2)
 

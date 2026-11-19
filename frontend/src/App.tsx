@@ -5,6 +5,7 @@ import { HomeCatalog } from './components/HomeCatalog';
 import { ScenarioStudio } from './components/ScenarioStudio';
 import { GameStage } from './components/GameStage';
 import { Loader2, AlertCircle } from 'lucide-react';
+import { GameplayPrototype } from "./components/gameplay/GameplayPrototype";
 
 export function App() {
   const [view, setView] = useState<'catalog' | 'studio' | 'game'>('catalog');
@@ -17,9 +18,14 @@ export function App() {
   const [latestTurn, setLatestTurn] = useState<AgentTurnResponse | null>(null);
   const [gameLoading, setGameLoading] = useState<boolean>(false);
 
+  const isGameplayPrototype =
+      new URLSearchParams(window.location.search).get("prototype") === "1";
+
   useEffect(() => {
-    loadScenariosList();
-  }, []);
+    if (!isGameplayPrototype) {
+      loadScenariosList();
+    }
+  }, [isGameplayPrototype]);
 
   const loadScenariosList = async () => {
     setLoadingScenarios(true);
@@ -67,6 +73,10 @@ export function App() {
     setScenarios([...scenarios, newScenario]);
     setView('catalog');
   };
+// Prototype gameplay indépendant : aucune connexion au backend.
+  if (isGameplayPrototype) {
+    return <GameplayPrototype />;
+  }
 
   if (loadingScenarios) {
     return (

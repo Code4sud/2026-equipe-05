@@ -8,8 +8,18 @@ from fastapi.middleware.cors import CORSMiddleware
 from models import Scenario, ScenarioCreateRequest, TurnRequest, SessionState, AgentTurnResponse
 from engine import engine_instance
 from agent import agent_instance
+import threading
+from scenario_bridge import ensure_compiled, compile_all_missing
+from contextlib import asynccontextmanager
 
-app = FastAPI(title="Agora Roleplay Studio API", version="1.0.0")
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Au démarrage : compilation en arrière-plan des scénarios pas encore compilés
+    threading.Thread(target=compile_all_missing, daemon=True).start()
+    yield
+    # Ici, on pourrait mettre du code d'arrêt si besoin
+
+app = FastAPI(title="Agora Roleplay Studio API", version="1.0.0", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
@@ -18,6 +28,9 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+from api.compiler_routes import router as compiler_router
+app.include_router(compiler_router)
 
 SCENARIOS_DIR = Path(__file__).parent / "data" / "scenarios"
 SCENARIOS_DIR.mkdir(parents=True, exist_ok=True)
@@ -54,6 +67,9 @@ def create_scenario(payload: ScenarioCreateRequest):
     with open(file_path, "w", encoding="utf-8") as f:
         json.dump(scenario.model_dump(), f, ensure_ascii=False, indent=2)
 
+    # NOUVEAU : Agent 1 compile le scénario (même scenario_id)
+    ensure_compiled(scenario)
+
     return scenario
 
 @app.post("/api/sessions/start/{scenario_id}", response_model=dict)
@@ -63,6 +79,10 @@ def start_session(scenario_id: str):
         raise HTTPException(status_code=404, detail=f"Scénario {scenario_id} introuvable.")
     
     scenario = load_scenario_from_file(file_path)
+
+    # NOUVEAU : scénarios écrits à la main ou jamais compilés (sans effet s'ils le sont déjà)
+    ensure_compiled(scenario)
+
     session = engine_instance.create_session(scenario)
 
     # Initial response containing first message from persona
@@ -105,6 +125,7 @@ def play_turn(session_id: str, payload: TurnRequest):
         "session": updated_session,
         "agent_turn": agent_resp.model_dump()
     }
+
 
 @app.get("/api/sessions/{session_id}", response_model=SessionState)
 def get_session_state(session_id: str):

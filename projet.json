@@ -1,9 +1,21 @@
 {
-  "nom": "Nom du projet",
-  "pitch": "Une phrase qui dit ce que fait le projet.",
-  "description": "Premier paragraphe : le problème que vous résolvez.\n\nDeuxième paragraphe : comment ça marche, et ce que vous avez construit en trois jours.",
-  "ecoles": ["Centrale  Méditerranée", "CESI"],
-  "stack": ["HTML", "JavaScript"],
+  "nom": "Agora Roleplay Studio",
+  "pitch": "Plateforme intelligente de roleplay pédagogique propulsée par des agents IA pour former aux métiers critiques.",
+  "description": "La formation professionnelle aux situations d'urgence et métiers techniques souffre d'un manque d'outils interactifs, immersifs et personnalisés permettant de simuler des scenarii complexes sans risque.\n\nConstruit en trois jours, Agora Roleplay Studio combine une architecture multi-agents Gemini (Agent 1: Compilateur de Scénario et Agent 2: Avatar de Simulation) avec FastAPI et une interface React/TypeScript interactive. Le système traduit des formulaires métier bruts en prompts systèmes comportementaux et évalue en temps réel la progression des étudiants à travers des jauges dynamiques.",
+  "ecoles": [
+    "Centrale Méditerranée",
+    "CESI"
+  ],
+  "stack": [
+    "Python",
+    "FastAPI",
+    "Google GenAI SDK",
+    "Gemini 2.5 Flash",
+    "React",
+    "TypeScript",
+    "Tailwind CSS",
+    "Vite"
+  ],
   "demo": "",
   "video": "",
   "captures": []

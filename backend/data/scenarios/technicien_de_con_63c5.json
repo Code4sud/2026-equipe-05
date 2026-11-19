@@ -1,0 +1,35 @@
+{
+  "scenario_id": "technicien_de_con_63c5",
+  "titre_metier": "Technicien de con",
+  "secteur": "Je sais pas",
+  "contexte": "Discter avec un technicien",
+  "objectif_etudiant": "Ne pas enerver le technicien",
+  "tours_max": 5,
+  "persona": {
+    "nom_role": "MICHEL",
+    "ton": "Pas content",
+    "premier_message": "Salut je suis pas content"
+  },
+  "regles_evaluation": "Recompenser si on dit pas d'insultes",
+  "jauges": [
+    {
+      "id": "securite",
+      "nom": "Sécurité & Conformité",
+      "depart": 70,
+      "seuil_echec": 0,
+      "seuil_victoire": null
+    },
+    {
+      "id": "avancement",
+      "nom": "Avancement Mission",
+      "depart": 20,
+      "seuil_echec": null,
+      "seuil_victoire": 85
+    }
+  ],
+  "propositions_depart": [
+    "Je prends le temps d'analyser la situation avant toute action.",
+    "J'applique immédiatement la procédure standard d'urgence.",
+    "Je consulte l'équipe pour décider de la marche à suivre."
+  ]
+}

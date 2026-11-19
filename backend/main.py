@@ -19,6 +19,9 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+from api.compiler_routes import router as compiler_router
+app.include_router(compiler_router)
+
 SCENARIOS_DIR = Path(__file__).parent / "data" / "scenarios"
 SCENARIOS_DIR.mkdir(parents=True, exist_ok=True)
 

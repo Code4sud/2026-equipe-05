@@ -2,29 +2,15 @@ import type { ElementType } from "react";
 import {
     AlertTriangle,
     Angry,
-    BadgeCheck,
-    BookOpen,
-    Clock,
-    FileText,
     Frown,
     Gauge,
     Handshake,
-    HardHat,
-    Hourglass,
     Lightbulb,
     Meh,
-    MessageSquare,
-    Monitor,
-    Radio,
-    Search,
     ShieldCheck,
     Smile,
-    Stamp,
-    ThumbsDown,
-    ThumbsUp,
-    Wrench,
 } from "lucide-react";
-import type { ActionVerb, CommStatus, Expression, Tone } from "./types";
+import type { CommStatus, Expression, Tone } from "./types";
 
 /**
  * Thème « bureau + papier » : fond de bureau sombre, documents clairs.
@@ -38,11 +24,6 @@ const ICONS: Record<string, ElementType> = {
     shield: ShieldCheck,
     gauge: Gauge,
     handshake: Handshake,
-    clock: Clock,
-    monitor: Monitor,
-    file: FileText,
-    radio: Radio,
-    wrench: Wrench,
     alert: AlertTriangle,
 };
 
@@ -54,27 +35,6 @@ export const TONE: Record<Tone, { text: string; border: string; bg: string; bar:
     neutral: { text: "text-[#2c5a7a]", border: "border-[#a9c4d6]", bg: "bg-[#e1ebf2]", bar: "bg-[#3b79a3]" },
     warn: { text: "text-[#8a5a00]", border: "border-[#e0c488]", bg: "bg-[#f6e8c4]", bar: "bg-[#c78a1c]" },
     bad: { text: "text-[#a3302a]", border: "border-[#e0a8a2]", bg: "bg-[#f4dad6]", bar: "bg-[#b3332b]" },
-};
-
-/** Tons pour valeurs affichées sur l'écran sombre de supervision. */
-export const SCREEN_TONE: Record<Tone, string> = {
-    good: "text-[#8fd99a]",
-    neutral: "text-[#d6dde3]",
-    warn: "text-[#f0c05a]",
-    bad: "text-[#f59a90]",
-};
-
-export const VERBS: Record<ActionVerb, { label: string; icon: ElementType }> = {
-    examine: { label: "Examiner", icon: Search },
-    verify: { label: "Vérifier", icon: BadgeCheck },
-    consult: { label: "Consulter", icon: BookOpen },
-    communicate: { label: "Appeler", icon: MessageSquare },
-    procedure: { label: "Lancer", icon: Lightbulb },
-    intervene: { label: "Envoyer", icon: HardHat },
-    wait: { label: "Attendre", icon: Hourglass },
-    accept: { label: "Accepter", icon: ThumbsUp },
-    refuse: { label: "Refuser", icon: ThumbsDown },
-    validate: { label: "Valider", icon: Stamp },
 };
 
 export const EXPRESSIONS: Record<Expression, { label: string; icon: ElementType; ring: string }> = {

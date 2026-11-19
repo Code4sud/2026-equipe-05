@@ -1,37 +1,39 @@
-import { useCallback, useReducer } from "react";
-import {
-    chooseDecision,
-    createInitialState,
-    performAction,
-    selectTool,
-    showDebrief,
-    startMission,
-} from "./simulation";
-import type { MissionDefinition, SimulationState } from "./types";
+import { useCallback, useEffect, useReducer, useRef } from "react";
+import { advance, applyOutcome, beginReply, buildContext, buildTranscript, cancelReply, createInitialState, getEncounter, startMission } from "./simulation";
+import { scriptedResponder } from "./scriptedResponder";
+import type { MissionDefinition, Outcome, PlayerReply, Responder, SimulationState } from "./types";
 
 type Command =
     | { type: "start" }
-    | { type: "perform"; actionId: string }
-    | { type: "decide"; optionId: string }
-    | { type: "tool"; toolId: string }
-    | { type: "debrief" }
+    | { type: "begin"; reply: PlayerReply }
+    | { type: "outcome"; outcome: Outcome; reply: PlayerReply }
+    | { type: "cancel"; error: string }
+    | { type: "advance" }
     | { type: "restart" };
 
-/** Hook d'état local : toute la simulation tourne dans React, sans serveur. */
-export function useSimulation(mission: MissionDefinition) {
+interface Options {
+    responder?: Responder;
+    /** Durée minimale de « l'écriture » du personnage, pour un rythme de conversation (ms). */
+    thinkingMs?: number;
+}
+
+const wait = (ms: number) => new Promise<void>((resolve) => window.setTimeout(resolve, ms));
+
+/** Hook d'état local : la simulation tourne dans React ; le répondant décide des conséquences. */
+export function useSimulation(mission: MissionDefinition, { responder = scriptedResponder, thinkingMs = 800 }: Options = {}) {
     const [state, dispatch] = useReducer(
         (current: SimulationState, command: Command): SimulationState => {
             switch (command.type) {
                 case "start":
                     return startMission(current, mission);
-                case "perform":
-                    return performAction(current, mission, command.actionId);
-                case "decide":
-                    return chooseDecision(current, mission, command.optionId);
-                case "tool":
-                    return selectTool(current, command.toolId);
-                case "debrief":
-                    return showDebrief(current);
+                case "begin":
+                    return beginReply(current, mission, command.reply);
+                case "outcome":
+                    return applyOutcome(current, mission, command.outcome, command.reply);
+                case "cancel":
+                    return cancelReply(current, mission, command.error);
+                case "advance":
+                    return advance(current, mission);
                 case "restart":
                     return createInitialState(mission);
                 default:
@@ -42,13 +44,59 @@ export function useSimulation(mission: MissionDefinition) {
         createInitialState,
     );
 
+    // Dernier état connu, lu au moment de répondre ; `token` invalide les réponses en retard (recommencer, quitter).
+    const latest = useRef(state);
+    latest.current = state;
+    const token = useRef(0);
+    useEffect(
+        () => () => {
+            token.current += 1;
+        },
+        [],
+    );
+
+    const reply = useCallback(
+        async (playerReply: PlayerReply) => {
+            const current = latest.current;
+            if (current.phase !== "playing" || current.step !== "asking") return;
+            if (playerReply.kind === "free" && !playerReply.text.trim()) return;
+            const encounter = getEncounter(mission, current.encounterId);
+            const character = encounter ? current.characters[encounter.characterId] : undefined;
+            if (!encounter || !character) return;
+
+            const mine = ++token.current;
+            dispatch({ type: "begin", reply: playerReply });
+            try {
+                const [outcome] = await Promise.all([
+                    responder.respond({
+                        mission,
+                        encounter,
+                        character,
+                        transcript: buildTranscript(current),
+                        reply: playerReply,
+                        ctx: buildContext(current),
+                    }),
+                    wait(thinkingMs),
+                ]);
+                if (mine === token.current) dispatch({ type: "outcome", outcome, reply: playerReply });
+            } catch (error) {
+                if (mine === token.current) {
+                    dispatch({ type: "cancel", error: error instanceof Error ? error.message : "Pas de réponse, réessaie." });
+                }
+            }
+        },
+        [mission, responder, thinkingMs],
+    );
+
     return {
         state,
+        supportsFreeText: responder.supportsFreeText,
         start: useCallback(() => dispatch({ type: "start" }), []),
-        perform: useCallback((actionId: string) => dispatch({ type: "perform", actionId }), []),
-        decide: useCallback((optionId: string) => dispatch({ type: "decide", optionId }), []),
-        selectTool: useCallback((toolId: string) => dispatch({ type: "tool", toolId }), []),
-        openDebrief: useCallback(() => dispatch({ type: "debrief" }), []),
-        restart: useCallback(() => dispatch({ type: "restart" }), []),
+        reply,
+        next: useCallback(() => dispatch({ type: "advance" }), []),
+        restart: useCallback(() => {
+            token.current += 1;
+            dispatch({ type: "restart" });
+        }, []),
     };
 }

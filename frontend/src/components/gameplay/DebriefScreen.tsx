@@ -1,11 +1,10 @@
 import { Lightbulb, RotateCcw, Trophy } from "lucide-react";
-import type { DebriefContent, EndCondition, IndicatorView, JournalEntry, Tone } from "./types";
+import type { DebriefContent, EndResult, IndicatorView, JournalEntry, Tone } from "./types";
 import { StatusIndicators } from "./StatusIndicators";
-import { formatClock } from "./simulation";
 import { BTN_DARK, LABEL, MUTED, SURFACE, TONE } from "./ui";
 
 interface DebriefScreenProps {
-    result: EndCondition;
+    result: EndResult;
     content: DebriefContent;
     indicators: IndicatorView[];
     journal: JournalEntry[];
@@ -67,11 +66,11 @@ export const DebriefScreen = ({ result, content, indicators, journal, onRestart,
                     </section>
 
                     <section className={`${SURFACE} p-6`}>
-                        <p className={`${LABEL} mb-4`}>TES DÉCISIONS, DANS L'ORDRE</p>
+                        <p className={`${LABEL} mb-4`}>TES RÉPONSES, DANS L'ORDRE</p>
                         <ol className="space-y-3">
                             {journal.map((entry) => (
                                 <li key={entry.id} className="flex items-start gap-3">
-                                    <span className={`mt-0.5 font-mono text-sm ${MUTED}`}>{formatClock(entry.clock)}</span>
+                                    <span className={`mt-0.5 font-mono text-sm ${MUTED}`}>{entry.time}</span>
                                     <span className={`mt-2 h-2.5 w-2.5 shrink-0 rounded-full ${TONE[entry.tone].bar}`} />
                                     <span className="min-w-0 text-sm leading-relaxed">
                                         <span className="font-semibold">{entry.label}</span>

@@ -62,7 +62,7 @@ export const StatusIndicators = ({ indicators, variant = "strip" }: StatusIndica
 
     return (
         <section
-            className={`${SURFACE} grid grid-cols-2 gap-x-6 gap-y-4 px-5 py-4 md:grid-cols-4`}
+            className={`${SURFACE} grid grid-cols-1 gap-x-8 gap-y-3 px-5 py-4 sm:grid-cols-3`}
             aria-label="État de la mission"
         >
             {indicators.map((indicator) => {

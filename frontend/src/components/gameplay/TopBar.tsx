@@ -1,9 +1,9 @@
 import { ArrowLeft, Clock, Radio, RotateCcw } from "lucide-react";
-import { formatClock } from "./simulation";
 
 interface TopBarProps {
     missionTitle: string;
-    clock: number;
+    /** Heure de la situation en cours (« 06:40 »). */
+    timeLabel: string;
     finished: boolean;
     progress: { done: number; total: number };
     onQuit: () => void;
@@ -13,7 +13,7 @@ interface TopBarProps {
 }
 
 /** Barre supérieure : identité, heure, progression, navigation. */
-export const TopBar = ({ missionTitle, clock, finished, progress, onQuit, onRestart, onGuide }: TopBarProps) => (
+export const TopBar = ({ missionTitle, timeLabel, finished, progress, onQuit, onRestart, onGuide }: TopBarProps) => (
     <header className="border-b border-black/40 bg-[#14171a] px-4 py-3 text-[#e8e2d0] md:px-8">
         <div className="mx-auto flex max-w-[1280px] flex-wrap items-center justify-between gap-x-6 gap-y-2">
             <div className="flex items-baseline gap-3">
@@ -25,7 +25,7 @@ export const TopBar = ({ missionTitle, clock, finished, progress, onQuit, onRest
 
             <div className="flex items-center gap-5 text-sm">
                 <span className="flex items-center gap-2 font-mono text-lg font-bold" title="Heure de la simulation">
-                    <Clock size={16} className="text-[#e0b252]" /> {formatClock(clock)}
+                    <Clock size={16} className="text-[#e0b252]" /> {timeLabel || "--:--"}
                 </span>
                 <span className="hidden text-[#a39d8a] md:block">
                     {finished ? "Mission terminée" : `Objectifs ${progress.done}/${progress.total}`}

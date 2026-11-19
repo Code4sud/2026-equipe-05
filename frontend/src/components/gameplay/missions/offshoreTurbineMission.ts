@@ -2,12 +2,17 @@
  * MISSION DE TEST (pré-alpha) — alerte sur une éolienne offshore.
  *
  * Données locales et fictives, destinées uniquement à tester le gameplay sans
- * backend. Les personnages, dialogues et réactions ci-dessous sont écrits à la
- * main : ce ne sont PAS des réponses d'un agent IA.
+ * backend. Les personnages, répliques et conséquences ci-dessous sont écrits à
+ * la main : ce ne sont PAS des réponses d'un agent IA.
+ *
+ * Structure : une suite de « rencontres ». Chaque rencontre = quelqu'un vient
+ * te parler, tu choisis ta réponse, le personnage réagit et les conséquences
+ * s'appliquent. Les rencontres suivantes s'adaptent à ce que tu as fait
+ * (drapeaux `has("…")`).
  *
  * FUTURE INTEGRATION IA :
- * remplacer `characters`, `openingDialogue` et les `dialogue` des outcomes par
- * les personnages et répliques générés par les agents.
+ * remplacer `characters`, les `opening` et les `outcome` par les personnages et
+ * les réactions générés par l'agent (voir `Responder` dans `types.ts`).
  *
  * FUTURE INTEGRATION BACKEND :
  * charger la mission (contexte, jauges, objectifs) depuis le scénario de la
@@ -15,870 +20,528 @@
  */
 
 import type {
-    ActionDefinition,
-    ActionOutcome,
-    DecisionDefinition,
     DialogueInput,
-    EventDefinition,
+    Encounter,
+    EndResult,
     Expression,
     GameContext,
     GuideStep,
     MissionDefinition,
+    ObjectiveDefinition,
+    Outcome,
 } from "../types";
 
+const say = (speakerId: string, text: string, expression: Expression = "neutral"): DialogueInput => ({ speakerId, text, expression });
+const r = (text: string, expression: Expression = "neutral") => ({ text, expression });
+
+/** Drapeaux qui traduisent une erreur ou un risque pris (utilisés pour le compte rendu et le bilan). */
+const MISTAKES = ["rushed", "diag_wrong", "degraded", "skipped_lock", "unsafe_window", "team_sent_unsafe"];
+const madeMistake = (ctx: GameContext) => MISTAKES.some((flag) => ctx.has(flag));
+const teamReady = (ctx: GameContext) => ctx.has("secured") && ctx.has("weather_ok") && !ctx.has("unsafe_window");
+
 /* ------------------------------------------------------------------ */
-/* Repères de temps et de météo (fictifs)                              */
+/* Objectifs                                                           */
 /* ------------------------------------------------------------------ */
 
-const at = (hours: number, minutes = 0) => hours * 60 + minutes;
-
-const START = at(6, 40);
-const DEADLINE = at(10, 30);
-const WIND_LIMIT = 20; // nœuds
-const WAVE_LIMIT = 1.5; // mètres
-const TEAM_DURATION = 50; // minutes
-
-type Point = [number, number];
-
-const WIND: Point[] = [
-    [at(6, 40), 25],
-    [at(7, 30), 23],
-    [at(8, 0), 20],
-    [at(8, 30), 17],
-    [at(9, 30), 15],
-    [at(10, 30), 19],
-    [at(11, 30), 27],
-    [at(24, 0), 27],
+const objectives: ObjectiveDefinition[] = [
+    { id: "understand", label: "Comprendre l'origine de l'alerte", isComplete: (ctx) => ctx.has("diag_ok") },
+    { id: "secure", label: "Mettre l'éolienne en sécurité", isComplete: (ctx) => ctx.has("secured") },
+    { id: "team", label: "Envoyer l'équipe au bon moment", isComplete: (ctx) => ctx.has("team_sent_ok") },
+    { id: "report", label: "Rendre compte honnêtement", isComplete: (ctx) => ctx.has("reported_honest") },
 ];
 
-const WAVES: Point[] = [
-    [at(6, 40), 1.9],
-    [at(7, 30), 1.7],
-    [at(8, 0), 1.5],
-    [at(8, 30), 1.3],
-    [at(10, 30), 1.4],
-    [at(11, 30), 2.2],
-    [at(24, 0), 2.2],
-];
-
-function interpolate(points: Point[], x: number): number {
-    if (x <= points[0][0]) return points[0][1];
-    for (let i = 1; i < points.length; i += 1) {
-        const [x1, y1] = points[i];
-        if (x <= x1) {
-            const [x0, y0] = points[i - 1];
-            return y0 + ((y1 - y0) * (x - x0)) / (x1 - x0);
-        }
-    }
-    return points[points.length - 1][1];
-}
-
-const windowOpen = (ctx: GameContext) => ctx.env.wind <= WIND_LIMIT && ctx.env.wave <= WAVE_LIMIT;
-const fr = (n: number) => String(n).replace(".", ",");
-
 /* ------------------------------------------------------------------ */
-/* Aides d'écriture                                                    */
+/* Rencontres                                                          */
 /* ------------------------------------------------------------------ */
 
-const say = (speakerId: string, text: string, expression: Expression = "neutral"): DialogueInput => ({
-    speakerId,
-    text,
-    expression,
-});
-
-const EVIDENCE_IDS = ["exam_alarms", "exam_vibration", "exam_oil", "check_sensor", "exam_neighbors"];
-
-const EVIDENCE_LABELS: Record<string, string> = {
-    exam_alarms: "le journal d'alarmes",
-    exam_vibration: "le spectre vibratoire",
-    exam_oil: "l'huile et les températures",
-    check_sensor: "l'état du capteur",
-    exam_neighbors: "la comparaison avec E-3 et E-5",
-};
-
-const joinList = (items: string[]) =>
-    items.length <= 1 ? items.join("") : `${items.slice(0, -1).join(", ")} et ${items[items.length - 1]}`;
-
-const missingEvidence = (ctx: GameContext) =>
-    EVIDENCE_IDS.filter((id) => !ctx.isDone(id)).map((id) => EVIDENCE_LABELS[id]);
-
-/* ------------------------------------------------------------------ */
-/* Actions                                                             */
-/* ------------------------------------------------------------------ */
-
-const actions: ActionDefinition[] = [
-    /* ---- Supervision : examiner, vérifier ---- */
+const encounters: Encounter[] = [
+    /* 1 — Marc : l'alerte ------------------------------------------------ */
     {
-        id: "exam_alarms",
-        verb: "examine",
-        toolId: "supervision",
-        label: "Journal d'alarmes",
-        description: "Historique des alarmes de E-4 sur les 48 dernières heures.",
-        cost: 5,
-        resolve: () => ({
-            text: "Tu constates que l'alarme n'est pas un événement isolé.",
-            tone: "good",
-            deltas: { diagnostic: 15 },
-            finding: {
-                title: "Journal d'alarmes · 48 h",
-                text:
-                    "3 alarmes « vibrations multiplicateur » sur E-4 : 02:10 avant-hier, 19:45 hier, 05:52 ce matin.\n" +
-                    "Elles se rapprochent. Ce n'est pas un événement isolé.",
-            },
-        }),
-    },
-    {
-        id: "exam_vibration",
-        verb: "examine",
-        toolId: "supervision",
-        label: "Analyse vibratoire (spectre)",
-        description: "Décompose la vibration par fréquence pour en identifier l'origine.",
-        cost: 10,
-        resolve: () => ({
-            text: "Le spectre pointe vers un défaut précis, pas vers une vibration quelconque.",
-            tone: "good",
-            deltas: { diagnostic: 25 },
-            finding: {
-                title: "Spectre vibratoire",
-                text:
-                    "Pic net à environ 3,4 fois la vitesse de rotation, avec harmoniques.\n" +
-                    "C'est la signature d'un défaut de roulement sur l'arbre rapide. Un simple déséquilibre apparaîtrait à 1 fois la rotation.",
-            },
-        }),
-    },
-    {
-        id: "exam_oil",
-        verb: "examine",
-        toolId: "supervision",
-        label: "Huile et températures",
-        description: "Résultats d'analyse d'huile et températures du multiplicateur.",
-        cost: 5,
-        resolve: () => ({
-            text: "L'huile confirme que quelque chose s'use à l'intérieur.",
-            tone: "good",
-            deltas: { diagnostic: 20 },
-            finding: {
-                title: "Analyse d'huile",
-                text:
-                    "Particules métalliques : +60 % en 5 jours. Température d'huile : 82 °C pour 70 °C attendus.\n" +
-                    "Le lubrifiant se dégrade : quelque chose frotte à l'intérieur du multiplicateur.",
-            },
-        }),
-    },
-    {
-        id: "check_sensor",
-        verb: "verify",
-        toolId: "supervision",
-        label: "Tester le capteur de vibration",
-        description: "Lance l'autotest pour s'assurer que l'alarme n'est pas une fausse alerte.",
-        cost: 10,
-        resolve: () => ({
-            text: "Le capteur est fiable : l'hypothèse de la fausse alarme perd du poids.",
-            tone: "good",
-            deltas: { diagnostic: 10 },
-            finding: {
-                title: "Autotest du capteur",
-                text: "Autotest OK. Calibration valide, câblage conforme.\nLe capteur mesure bien ce qui se passe réellement.",
-            },
-        }),
-    },
-    {
-        id: "exam_neighbors",
-        verb: "examine",
-        toolId: "supervision",
-        label: "Comparer avec E-3 et E-5",
-        description: "Compare E-4 aux éoliennes voisines, soumises au même vent.",
-        cost: 5,
-        resolve: () => ({
-            text: "Le problème est propre à E-4 : ce n'est ni la météo, ni le réseau.",
-            tone: "good",
-            deltas: { diagnostic: 10 },
-            finding: {
-                title: "Comparaison avec les voisines",
-                text: "E-3 et E-5 (même vent, même exposition) : vibrations normales, aucune alarme.\nLe défaut est propre à E-4.",
-            },
-        }),
-    },
-
-    /* ---- Documents : consulter ---- */
-    {
-        id: "doc_proc",
-        verb: "consult",
-        toolId: "documents",
-        label: "PROC-SEC-04 · Mise en sécurité avant accès",
-        description: "Ordre des opérations et limites d'accès à la nacelle.",
-        cost: 10,
-        resolve: () => ({
-            text: "Tu connais maintenant l'ordre obligatoire des opérations et les limites d'accès.",
-            tone: "good",
-            deltas: { safety: 5 },
-            setFlags: ["procedure_read"],
-            finding: {
-                title: "PROC-SEC-04",
-                text:
-                    "1. Arrêt du rotor et mise en drapeau des pales.\n" +
-                    "2. Consignation des énergies (LOTO), uniquement une fois le rotor arrêté.\n" +
-                    "3. Accès nacelle autorisé si vent ≤ 20 nœuds ET vagues ≤ 1,5 m.\n" +
-                    "4. Équipe briefée sur le défaut et les risques avant le transfert.\n" +
-                    "Aucune étape ne peut être sautée ni inversée.",
-            },
-        }),
-    },
-    {
-        id: "doc_maint",
-        verb: "consult",
-        toolId: "documents",
-        label: "MAINT-E4-02 · Fiche du multiplicateur",
-        description: "Historique et durée de vie des composants du multiplicateur.",
-        cost: 5,
-        resolve: () => ({
-            text: "L'âge du roulement rend l'hypothèse d'usure très crédible.",
-            tone: "good",
-            deltas: { diagnostic: 10 },
-            finding: {
-                title: "MAINT-E4-02",
-                text:
-                    "Multiplicateur de E-4 : en service depuis 6,5 ans. Durée de vie moyenne du roulement de l'arbre rapide : 7 ans.\n" +
-                    "Un roulement qui s'use produit une vibration à fréquence caractéristique et libère des particules métalliques dans l'huile.",
-            },
-        }),
-    },
-    {
-        id: "doc_hse",
-        verb: "consult",
-        toolId: "documents",
-        label: "HSE-2026-01 · Consignes générales",
-        description: "Règles de sécurité applicables à tout le parc.",
-        cost: 5,
-        resolve: () => ({
-            text: "Tu sais désormais que les limites de sécurité ne se négocient pas.",
-            tone: "good",
-            deltas: { safety: 5 },
-            setFlags: ["hse_read"],
-            finding: {
-                title: "HSE-2026-01",
-                text:
-                    "Aucune dérogation aux limites d'accès, quelle que soit la pression de production.\n" +
-                    "En cas de doute : on attend. Un retard coûte de l'argent, un accident coûte une vie.\n" +
-                    "Tout ordre contraire à une règle de sécurité peut, et doit, être refusé.",
-            },
-        }),
-    },
-
-    /* ---- Radio : communiquer ---- */
-    {
-        id: "radio_nadia_forecast",
-        verb: "communicate",
-        toolId: "radio",
-        characterId: "nadia",
-        tracked: true,
-        label: "Demander la prévision marine",
-        description: "Vent et état de la mer sur la zone, pour la matinée.",
-        cost: 5,
-        resolve: () => ({
-            text: "Tu connais la fenêtre météo utile pour une éventuelle intervention.",
-            tone: "good",
-            deltas: { safety: 5 },
-            setFlags: ["weather_known"],
-            dialogue: [
-                say("player", "Nadia, j'ai besoin de la prévision vent et mer sur E-4 pour la matinée."),
-                say(
-                    "nadia",
-                    "Là, vent à 25 nœuds et vagues de 1,9 m. Ça faiblit : sous 20 nœuds et 1,5 m vers 8 h, et ça tient jusqu'à 10 h 30 environ. Ensuite ça se dégrade vite. Ta fenêtre utile : 8 h – 10 h 30.",
-                ),
-            ],
-        }),
-    },
-    {
-        id: "radio_tom_team",
-        verb: "communicate",
-        toolId: "radio",
-        characterId: "tom",
-        tracked: true,
-        label: "Joindre l'équipe de maintenance",
-        description: "Savoir qui est disponible et en combien de temps.",
-        cost: 5,
-        resolve: () => ({
-            text: "L'équipe est mobilisable dès que tu donnes le feu vert.",
-            tone: "good",
-            setFlags: ["team_contacted"],
-            dialogue: [
-                say("player", "Tom, tu es dispo ? Quelle équipe et quel délai pour un transfert vers E-4 ?"),
-                say(
-                    "tom",
-                    "Équipe de trois, bateau de transfert prêt en 45 minutes dès ton feu vert. Dis-moi ce qu'on cherche et ce qu'on doit prévoir : je ne pars pas à l'aveugle.",
-                ),
-            ],
-        }),
-    },
-    {
-        id: "radio_tom_brief",
-        verb: "communicate",
-        toolId: "radio",
-        characterId: "tom",
-        tracked: true,
-        label: "Briefer l'équipe avant le départ",
-        description: "Expliquer le défaut, les risques et les conditions d'accès.",
-        cost: 10,
-        availability: (ctx) => {
-            if (!ctx.has("team_contacted")) return { ok: false, reason: "Joins d'abord l'équipe." };
-            if (!ctx.has("diag_ok")) return { ok: false, reason: "Il te faut un diagnostic posé pour briefer l'équipe." };
-            return { ok: true };
-        },
-        resolve: (ctx): ActionOutcome => {
-            const player = say(
-                "player",
-                "Tom, on cherche une usure de roulement sur l'arbre rapide. Accès nacelle uniquement dans la fenêtre météo, harnais, et contrôle des énergies consignées.",
-            );
-            if (!ctx.has("stopped") || !ctx.has("locked")) {
-                return {
-                    text: "Tom refuse de briefer sur une situation qui n'est pas encore sécurisée.",
-                    tone: "warn",
-                    blocked: true,
-                    deltas: { trust: -3 },
-                    dialogue: [
-                        player,
-                        say(
-                            "tom",
-                            "Attends : la machine n'est pas encore arrêtée et consignée. Je ne briefe pas mon équipe sur une situation qui n'est pas sécurisée.",
-                            "concerned",
-                        ),
-                    ],
-                };
-            }
-            return {
-                text: "L'équipe sait ce qu'elle cherche et comment intervenir en sécurité.",
-                tone: "good",
-                deltas: { safety: 10, trust: 5 },
-                setFlags: ["team_briefed"],
-                dialogue: [
-                    player,
-                    say("tom", "Reçu, c'est clair. On prépare le harnais et le matériel de contrôle. On est prêts à partir.", "happy"),
-                ],
-            };
-        },
-    },
-    {
-        id: "radio_marc_update",
-        verb: "communicate",
-        toolId: "radio",
+        id: "alert",
         characterId: "marc",
-        once: false,
-        label: "Faire le point avec Marc",
-        description: "Demander l'avis de ton responsable sur la suite (prend 5 minutes).",
-        cost: 5,
-        resolve: (ctx): ActionOutcome => {
-            let advice: string;
-            let expression: Expression = "neutral";
-            if (!ctx.has("procedure_read")) {
-                advice = "Avant d'agir, relis la procédure de mise en sécurité. Tout part de là.";
-            } else if (ctx.doneCount(EVIDENCE_IDS) < 3) {
-                advice = "Tu as encore peu de données. Regarde ce que disent le spectre, l'huile et les éoliennes voisines avant de conclure.";
-            } else if (!ctx.has("diag_ok")) {
-                advice = "Tu as de quoi te prononcer. Pose ton diagnostic.";
-                expression = "thinking";
-            } else if (!ctx.has("stopped")) {
-                advice = "Diagnostic posé, et la machine tourne toujours ? Arrête-la d'abord.";
-                expression = "concerned";
-            } else if (!ctx.has("locked")) {
-                advice = "Machine arrêtée, bien. Il faut la consigner avant tout accès humain.";
-            } else if (!ctx.has("team_contacted")) {
-                advice = "Machine sécurisée. Contacte Tom pour préparer une équipe.";
-            } else if (!ctx.has("team_briefed")) {
-                advice = "Brief l'équipe avant son départ, c'est dans la procédure.";
-            } else if (!windowOpen(ctx)) {
-                advice = `Tout est prêt, mais le vent est à ${ctx.env.wind} nœuds. On attend la fenêtre météo, on ne la force pas.`;
-            } else if (!ctx.has("team_sent")) {
-                advice = "Les conditions sont réunies. Tu peux envoyer l'équipe.";
-                expression = "happy";
-            } else {
-                advice = "L'équipe est sur place. Il ne reste qu'à clôturer et me faire ton compte rendu.";
-            }
-            return {
-                text: "Marc te donne son avis sur la situation.",
-                tone: "neutral",
-                dialogue: [say("player", "Marc, je fais le point avec toi ?"), say("marc", advice, expression)],
-            };
-        },
+        time: "06:40",
+        title: "Marc t'appelle : alarme sur E-4",
+        objectiveId: "understand",
+        opening: [
+            say("marc", "Salut ! Une alarme de vibrations vient de se déclencher sur l'éolienne E-4, en pleine mer. Le vent souffle à 25 nœuds, ça secoue.", "concerned"),
+            say("marc", "Tu es de permanence : c'est toi qui décides. Tu fais quoi en premier ?", "neutral"),
+        ],
+        replies: [
+            {
+                id: "data",
+                label: "Je regarde d'abord les mesures de la machine.",
+                outcome: {
+                    reaction: [r("Bon réflexe : on ne décide jamais à l'aveugle. Regarde bien les chiffres.", "happy")],
+                    consequence: { tone: "good", title: "Tu as vérifié avant d'agir", text: "Tu as lu les mesures avant de décider : tu as de quoi comprendre l'alerte." },
+                    deltas: { trust: 10 },
+                    setFlags: ["checked_data"],
+                },
+            },
+            {
+                id: "rush",
+                label: "J'envoie l'équipe en mer, tout de suite !",
+                outcome: {
+                    reaction: [r("Stop ! Avec ce vent, c'est dangereux, et on ne sait même pas ce qui cloche !", "angry")],
+                    consequence: { tone: "bad", title: "Danger évité de justesse", text: "Envoyer des gens en mer sans comprendre l'alerte, avec 25 nœuds de vent, met leur sécurité en jeu." },
+                    deltas: { safety: -15, trust: -10 },
+                    setFlags: ["rushed"],
+                },
+            },
+            {
+                id: "stop",
+                label: "J'arrête la machine par précaution.",
+                outcome: {
+                    reaction: [r("Prudent, ça évite le pire. Mais arrêter ne suffit pas : il faut aussi comprendre ce qui cloche.", "concerned")],
+                    consequence: { tone: "neutral", title: "Machine arrêtée", text: "Plus sûr, mais le parc produit moins d'électricité." },
+                    deltas: { safety: 10, efficiency: -10 },
+                    setFlags: ["stopped"],
+                },
+            },
+        ],
     },
 
-    /* ---- Zone d'action : commandes ---- */
-    {
-        id: "cmd_diagnose",
-        verb: "validate",
-        toolId: "command",
-        label: "Poser mon diagnostic",
-        description: "Annoncer à Marc la cause probable de l'alarme.",
-        cost: 0,
-        once: false,
-        doneWhen: (ctx) => ctx.has("diag_ok"),
-        availability: (ctx) => {
-            if (ctx.has("diag_ok")) return { ok: false, reason: "Diagnostic déjà posé." };
-            if (ctx.doneCount(EVIDENCE_IDS) < 1) {
-                return { ok: false, reason: "Examine d'abord au moins une donnée de supervision." };
-            }
-            return { ok: true };
-        },
-        resolve: () => ({
-            text: "Marc attend ton diagnostic.",
-            tone: "neutral",
-            decisionId: "diagnosis",
-            dialogue: [say("marc", "Je t'écoute : quelle est la cause probable de l'alarme ?", "thinking")],
-        }),
-    },
-    {
-        id: "cmd_stop",
-        verb: "procedure",
-        toolId: "command",
-        label: "Demander l'arrêt à distance de E-4",
-        description: "Arrêt du rotor et mise en drapeau des pales depuis le centre de contrôle.",
-        cost: 5,
-        once: false,
-        doneWhen: (ctx) => ctx.has("stopped"),
-        availability: (ctx) => (ctx.has("stopped") ? { ok: false, reason: "E-4 est déjà à l'arrêt." } : { ok: true }),
-        resolve: (ctx) => ({
-            text: "Le rotor est arrêté : la machine ne s'aggrave plus.",
-            tone: "good",
-            deltas: { safety: 15 },
-            setFlags: ["stopped"],
-            dialogue: [
-                ctx.has("diag_ok")
-                    ? say("marc", "Arrêt confirmé, pales en drapeau. La machine ne s'aggrave plus. Pense à la consignation avant tout accès.", "happy")
-                    : say("marc", "Arrêt demandé par précaution. Dans le doute, on sécurise d'abord : bon réflexe.", "happy"),
-            ],
-        }),
-    },
-    {
-        id: "cmd_lockout",
-        verb: "procedure",
-        toolId: "command",
-        label: "Lancer la consignation (LOTO)",
-        description: "Verrouille les énergies de E-4 avant tout accès humain.",
-        cost: 15,
-        once: false,
-        doneWhen: (ctx) => ctx.has("locked"),
-        availability: (ctx) => {
-            if (ctx.has("locked")) return { ok: false, reason: "E-4 est déjà consignée." };
-            if (!ctx.has("stopped")) {
-                return { ok: false, reason: "E-4 tourne encore : il faut arrêter le rotor avant de consigner." };
-            }
-            return { ok: true };
-        },
-        resolve: () => ({
-            text: "Les énergies sont verrouillées : l'accès humain devient possible côté énergie.",
-            tone: "good",
-            deltas: { safety: 15 },
-            setFlags: ["locked"],
-            dialogue: [say("marc", "Consignation faite, énergies verrouillées. Côté énergie, l'accès est sûr.", "happy")],
-        }),
-    },
-    {
-        id: "cmd_wait",
-        verb: "wait",
-        toolId: "command",
-        label: "Attendre 30 minutes",
-        description: "Laisse passer le temps : la météo évolue, mais la machine aussi.",
-        cost: 30,
-        once: false,
-        resolve: (ctx) => ({
-            text: windowOpen(ctx)
-                ? "La fenêtre météo est ouverte : tu peux agir."
-                : "Le vent et la mer sont encore hors des limites d'accès.",
-            tone: "neutral",
-        }),
-    },
-    {
-        id: "cmd_send_team",
-        verb: "intervene",
-        toolId: "command",
-        label: "Envoyer l'équipe d'inspection sur E-4",
-        description: `Transfert en mer, accès nacelle et inspection du multiplicateur (≈ ${TEAM_DURATION} min).`,
-        cost: TEAM_DURATION,
-        availability: (ctx) =>
-            ctx.remaining < TEAM_DURATION
-                ? { ok: false, reason: `Pas assez de temps avant la fin de la fenêtre (${TEAM_DURATION} min nécessaires).` }
-                : { ok: true },
-        resolve: (ctx): ActionOutcome => {
-            if (!ctx.has("diag_ok")) {
-                return {
-                    text: "Marc refuse de mobiliser une équipe sans diagnostic posé.",
-                    tone: "warn",
-                    blocked: true,
-                    deltas: { trust: -5 },
-                    dialogue: [
-                        say("marc", "Je ne mobilise pas une équipe en mer sans diagnostic. On cherche quoi, exactement ?", "concerned"),
-                    ],
-                };
-            }
-            if (!ctx.has("stopped") || !ctx.has("locked")) {
-                return {
-                    text: "Marc bloque l'envoi : la machine n'est pas arrêtée et consignée.",
-                    tone: "bad",
-                    blocked: true,
-                    deltas: { safety: -10, trust: -10 },
-                    dialogue: [
-                        say(
-                            "marc",
-                            "Tu veux envoyer quelqu'un sur une machine qui n'est pas arrêtée et consignée ? Non. Ce n'est pas négociable.",
-                            "angry",
-                        ),
-                    ],
-                };
-            }
-            if (!windowOpen(ctx)) {
-                return {
-                    text: "Le transfert est impossible : vent et mer hors des limites d'accès.",
-                    tone: "warn",
-                    blocked: true,
-                    deltas: { trust: -5 },
-                    dialogue: [
-                        say(
-                            "nadia",
-                            `Vent à ${ctx.env.wind} nœuds, vagues de ${fr(ctx.env.wave)} m : c'est hors limites. Le bateau ne part pas.`,
-                            "concerned",
-                        ),
-                    ],
-                };
-            }
-            return ctx.has("team_briefed")
-                ? {
-                      text: "L'équipe a transféré en sécurité et confirmé le défaut.",
-                      tone: "good",
-                      deltas: { safety: 10 },
-                      setFlags: ["team_sent"],
-                      dialogue: [
-                          say(
-                              "tom",
-                              "On est sur E-4. Roulement de l'arbre rapide confirmé : bague extérieure écaillée. Heureusement qu'on a arrêté à temps. On prépare le remplacement.",
-                              "happy",
-                          ),
-                      ],
-                  }
-                : {
-                      text: "L'équipe est partie sans brief : l'inspection a eu lieu, mais avec moins de maîtrise.",
-                      tone: "warn",
-                      deltas: { safety: -10, trust: -5 },
-                      setFlags: ["team_sent", "unbriefed"],
-                      dialogue: [
-                          say(
-                              "tom",
-                              "On est sur place, mais je n'avais pas toutes les informations au départ. Ça s'est joué à peu de choses.",
-                              "concerned",
-                          ),
-                      ],
-                  };
-        },
-    },
-    {
-        id: "cmd_close",
-        verb: "validate",
-        toolId: "command",
-        label: "Clôturer l'intervention et rendre compte",
-        description: "Valider la fin d'intervention et faire ton compte rendu à Marc.",
-        cost: 10,
-        availability: (ctx) =>
-            ctx.has("team_sent") ? { ok: true } : { ok: false, reason: "Aucune intervention à clôturer pour l'instant." },
-        resolve: (ctx): ActionOutcome => {
-            const clean =
-                ctx.has("diag_ok") &&
-                !ctx.has("unbriefed") &&
-                !ctx.has("auto_trip") &&
-                !ctx.has("escalated") &&
-                ctx.indicators.safety >= 70 &&
-                ctx.indicators.trust >= 50;
-            return clean
-                ? {
-                      text: "Compte rendu validé. Intervention réussie.",
-                      tone: "good",
-                      deltas: { trust: 5 },
-                      dialogue: [
-                          say("player", "Marc, intervention terminée : roulement confirmé, machine sécurisée, équipe rentrée."),
-                          say("marc", "Excellent. Diagnostic argumenté, sécurité respectée, équipe briefée : voilà comment on fait.", "happy"),
-                      ],
-                      end: {
-                          status: "success",
-                          reason: "E-4 a été sécurisée, le défaut confirmé et l'équipe est intervenue dans les règles.",
-                      },
-                  }
-                : {
-                      text: "Compte rendu validé, mais l'intervention a pris des risques en route.",
-                      tone: "warn",
-                      deltas: { trust: 3 },
-                      dialogue: [
-                          say("player", "Marc, intervention terminée. Le défaut est confirmé."),
-                          say(
-                              "marc",
-                              "C'est fait, mais on a pris des risques ou laissé la situation se dégrader en route. On en reparle à froid.",
-                              "neutral",
-                          ),
-                      ],
-                      end: {
-                          status: "partial",
-                          reason: "Le défaut est traité, mais des décisions ont fragilisé la sécurité ou la confiance de l'équipe.",
-                      },
-                  };
-        },
-    },
-];
-
-/* ------------------------------------------------------------------ */
-/* Décisions                                                           */
-/* ------------------------------------------------------------------ */
-
-const decisions: DecisionDefinition[] = [
+    /* 2 — Tom : le diagnostic ------------------------------------------- */
     {
         id: "diagnosis",
-        characterId: "marc",
-        title: "Diagnostic",
-        prompt: "Quelle est, selon toi, la cause probable de l'alarme sur E-4 ?",
-        options: [
+        characterId: "tom",
+        time: "06:55",
+        title: "Tom, chef d'équipe, te demande ton diagnostic",
+        objectiveId: "understand",
+        opening: (ctx) => [
+            ctx.has("checked_data")
+                ? say("tom", "J'ai vu que tu as regardé les mesures. Elles disent : la vibration monte à chaque tour de rotor, et l'huile est à 92 °C, c'est beaucoup trop chaud.", "neutral")
+                : say("tom", "Je n'ai pas encore les mesures complètes, mais la vibration est forte et l'huile semble très chaude : 92 °C.", "concerned"),
+            say("tom", "Dehors il fait 8 °C. À ton avis, c'est quoi le problème ?", "thinking"),
+        ],
+        replies: [
             {
                 id: "bearing",
-                verb: "validate",
-                label: "Usure d'un roulement du multiplicateur",
-                hint: "Défaut mécanique interne.",
-                cost: 5,
-                resolve: (ctx): ActionOutcome => {
-                    const strong = ctx.doneCount(EVIDENCE_IDS) >= 3 && (ctx.isDone("exam_vibration") || ctx.isDone("exam_oil"));
-                    return strong
-                        ? {
-                              text: "Diagnostic solide, appuyé par plusieurs données concordantes.",
-                              tone: "good",
-                              deltas: { diagnostic: 20, trust: 10 },
-                              setFlags: ["diag_ok"],
-                              dialogue: [
-                                  say("player", "Je pense à une usure de roulement sur l'arbre rapide. Les données concordent."),
-                                  say("marc", "Convaincant. Tu t'appuies sur des mesures, pas sur une intuition. On part là-dessus.", "happy"),
-                              ],
-                          }
-                        : {
-                              text: "Diagnostic plausible, mais trop peu étayé.",
-                              tone: "warn",
-                              deltas: { diagnostic: 5 },
-                              setFlags: ["diag_ok", "diag_weak"],
-                              dialogue: [
-                                  say("player", "Je pense à une usure de roulement sur l'arbre rapide."),
-                                  say(
-                                      "marc",
-                                      "C'est cohérent, mais tu t'appuies sur trop peu d'éléments. Un diagnostic, ça se prouve. Je te suis, mais sois prudent.",
-                                      "thinking",
-                                  ),
-                              ],
-                          };
-                },
-            },
-            {
-                id: "false_alarm",
-                verb: "validate",
-                label: "Fausse alarme : capteur défaillant",
-                hint: "L'alarme ne reflète pas un vrai problème.",
-                cost: 5,
-                resolve: (ctx): ActionOutcome => {
-                    const missing = missingEvidence(ctx);
-                    return {
-                        text: "Diagnostic rejeté : tu écartes une alarme récurrente un peu vite.",
-                        tone: "bad",
-                        deltas: { diagnostic: -15, trust: -10 },
-                        setFlags: ["diag_wrong"],
-                        dialogue: [
-                            say("player", "Je pense à une fausse alarme : le capteur doit être défaillant."),
-                            say(
-                                "marc",
-                                missing.length > 0
-                                    ? `Tu écartes une alarme récurrente sans avoir regardé ${joinList(missing)}. Reprends tes données.`
-                                    : "Avec toutes ces données, tu écartes l'alarme ? Relis tes résultats : le capteur est bon et l'huile se dégrade.",
-                                "concerned",
-                            ),
-                        ],
-                    };
-                },
-            },
-            {
-                id: "imbalance",
-                verb: "validate",
-                label: "Déséquilibre des pales (givre, encrassement)",
-                hint: "Les pales ne sont plus bien équilibrées.",
-                cost: 5,
-                resolve: (ctx): ActionOutcome => ({
-                    text: "Diagnostic rejeté : il n'explique pas toutes les observations.",
-                    tone: "bad",
-                    deltas: { diagnostic: -10, trust: -8 },
-                    setFlags: ["diag_wrong"],
-                    dialogue: [
-                        say("player", "Je pense à un déséquilibre des pales, peut-être du givre ou de l'encrassement."),
-                        say(
-                            "marc",
-                            ctx.isDone("exam_vibration")
-                                ? "Un déséquilibre vibrerait à la fréquence de rotation. Ton spectre dit autre chose. Reprends-le."
-                                : "Tu n'as pas regardé le spectre vibratoire pour l'affirmer. Et un déséquilibre n'explique pas les particules dans l'huile.",
-                            "concerned",
-                        ),
-                    ],
+                label: "Un roulement du multiplicateur est usé.",
+                outcome: (ctx): Outcome => ({
+                    reaction: [r("Oui, ça colle : vibration plus huile chaude, c'est la signature d'un roulement qui s'use.", "happy")],
+                    consequence: ctx.has("checked_data")
+                        ? { tone: "good", title: "Bon diagnostic, bien appuyé", text: "Tu t'es appuyé sur des mesures : c'est ce qui rend ton diagnostic fiable." }
+                        : { tone: "good", title: "Bon diagnostic", text: "Tu as vu juste, mais sans avoir regardé les mesures. La prochaine fois, vérifie d'abord." },
+                    deltas: ctx.has("checked_data") ? { trust: 10, safety: 5 } : { trust: 5 },
+                    setFlags: ["diag_ok"],
                 }),
+            },
+            {
+                id: "sensor",
+                label: "C'est une fausse alarme : le capteur est cassé.",
+                outcome: {
+                    reaction: [r("Hmm, pas sûr. L'huile à 92 °C, ce n'est pas un capteur qui se trompe…", "concerned")],
+                    consequence: { tone: "bad", title: "Piste fausse", text: "Une alarme qu'on ignore peut cacher une vraie panne. L'huile chaude ne ment pas." },
+                    deltas: { safety: -15 },
+                    setFlags: ["diag_wrong"],
+                },
+            },
+            {
+                id: "frost",
+                label: "C'est du givre sur les pales.",
+                outcome: {
+                    reaction: [r("Il fait 8 °C : pas de givre. Et le givre ne chauffe pas l'huile.", "surprised")],
+                    consequence: { tone: "bad", title: "Piste fausse", text: "Le givre ne peut pas expliquer une huile à 92 °C." },
+                    deltas: { safety: -10 },
+                    setFlags: ["diag_wrong"],
+                },
             },
         ],
     },
+
+    /* 2b — Tom : seconde chance (adaptatif) ------------------------------ */
     {
-        id: "production_pressure",
-        characterId: "marc",
-        title: "Pression de la production",
-        prompt:
-            "La direction de la production veut remettre E-4 en service à 50 % de puissance jusqu'à demain, le temps de planifier la réparation. Quelle est ta décision ?",
-        options: [
+        id: "second_opinion",
+        characterId: "tom",
+        time: "07:05",
+        title: "Tom reprend le diagnostic avec toi",
+        objectiveId: "understand",
+        when: (ctx) => ctx.has("diag_wrong") && !ctx.has("diag_ok"),
+        opening: [
+            say("tom", "On reprend ensemble, sans stress. Tu as : une vibration qui monte à chaque tour, une huile trop chaude, et 8 °C dehors.", "neutral"),
+            say("tom", "Qu'est-ce que ça te dit ?", "thinking"),
+        ],
+        replies: [
             {
-                id: "accept",
-                verb: "accept",
-                label: "Accepter la remise en service à 50 %",
-                hint: "La production reprend, la machine continue de tourner.",
-                resolve: (): ActionOutcome => ({
-                    text: "E-4 repart en production à puissance réduite, avec un défaut non traité.",
-                    tone: "bad",
-                    deltas: { safety: -35, trust: 5 },
-                    setFlags: ["degraded_mode"],
-                    clearFlags: ["stopped", "locked"],
-                    dialogue: [
-                        say("player", "D'accord, on la remet en service à 50 % jusqu'à demain."),
-                        say("marc", "Bien, je préviens la direction. On garde un œil sur les vibrations.", "neutral"),
-                    ],
-                }),
+                id: "bearing",
+                label: "Un roulement du multiplicateur s'use.",
+                outcome: {
+                    reaction: [r("Voilà. Tu as corrigé le tir, c'est ça qui compte.", "happy")],
+                    consequence: { tone: "good", title: "Tu as corrigé ton erreur", text: "Revenir sur un premier avis, preuves à l'appui, fait partie du métier." },
+                    deltas: { trust: 5 },
+                    setFlags: ["diag_ok", "diag_late"],
+                },
             },
+            {
+                id: "help",
+                label: "Je ne sais pas, explique-moi.",
+                outcome: {
+                    reaction: [r("Merci de le dire franchement. C'est un roulement : il frotte, il vibre, il chauffe l'huile. Je te montre les relevés.", "happy")],
+                    consequence: { tone: "good", title: "Demander de l'aide n'est pas une faiblesse", text: "Mieux vaut dire « je ne sais pas » que décider au hasard." },
+                    deltas: { trust: 5 },
+                    setFlags: ["diag_ok", "asked_help"],
+                },
+            },
+        ],
+    },
+
+    /* 3 — Claire : la pression ------------------------------------------ */
+    {
+        id: "pressure",
+        characterId: "claire",
+        time: "07:20",
+        title: "La direction veut relancer la machine",
+        objectiveId: "secure",
+        opening: (ctx) => [
+            ctx.has("stopped")
+                ? say("claire", "Bonjour, ici Claire Duval, de la direction de la production. J'ai vu qu'E-4 est à l'arrêt. Chaque heure d'arrêt nous coûte cher.", "neutral")
+                : say("claire", "Bonjour, ici Claire Duval, de la direction de la production. J'ai vu l'alarme sur E-4. Chaque heure d'arrêt nous coûte cher.", "neutral"),
+            say("claire", "Garde-la en service à 50 % ce matin, d'accord ?", "happy"),
+        ],
+        replies: [
             {
                 id: "refuse",
-                verb: "refuse",
-                label: "Refuser et argumenter",
-                hint: "Tenir ta position face à la pression.",
-                resolve: (ctx): ActionOutcome => {
-                    const solid = ctx.indicators.diagnostic >= 50;
-                    return solid
+                label: "Non : sans réparation, c'est dangereux. Voici pourquoi : l'huile est à 92 °C.",
+                outcome: {
+                    reaction: [r("Hmm. Si tu as des chiffres, j'écoute. On attendra, alors.", "concerned")],
+                    consequence: { tone: "good", title: "Tu as tenu bon, avec des faits", text: "Dire non à la pression, en donnant des arguments précis, protège les équipes." },
+                    deltas: { trust: 10, efficiency: -10, safety: 5 },
+                    setFlags: ["pressure_resisted"],
+                },
+            },
+            {
+                id: "accept",
+                label: "D'accord, on la relance à 50 %.",
+                outcome: {
+                    reaction: [r("Parfait, merci ! C'est ce qu'on voulait entendre.", "happy")],
+                    consequence: { tone: "bad", title: "Tu as cédé à la pression", text: "La production repart, mais la machine abîmée tourne à nouveau. Le risque monte." },
+                    deltas: { safety: -35, efficiency: 20 },
+                    setFlags: ["degraded"],
+                },
+            },
+            {
+                id: "delay",
+                label: "Laissez-moi 30 minutes pour vérifier, je vous rappelle.",
+                outcome: {
+                    reaction: [r("D'accord, mais ne tarde pas trop.", "neutral")],
+                    consequence: { tone: "neutral", title: "Tu as gagné du temps", text: "Tu n'as ni cédé ni refusé : tu t'es donné le temps de décider." },
+                    deltas: { efficiency: -5, trust: 5 },
+                    setFlags: ["pressure_delayed"],
+                },
+            },
+        ],
+    },
+
+    /* 3b — Tom : conséquence d'avoir cédé (adaptatif) ------------------- */
+    {
+        id: "trip",
+        characterId: "tom",
+        time: "07:35",
+        title: "Alarme niveau 2 : E-4 s'est coupée seule",
+        objectiveId: "secure",
+        when: (ctx) => ctx.has("degraded"),
+        opening: [
+            say("tom", "Alarme niveau 2 ! E-4 vient de se couper toute seule : le multiplicateur a trop chauffé. Ça va coûter cher à réparer.", "angry"),
+            say("tom", "Qu'est-ce qu'on fait maintenant ?", "concerned"),
+        ],
+        replies: [
+            {
+                id: "own",
+                label: "J'assume : on met la machine en sécurité et je préviens la direction.",
+                outcome: {
+                    reaction: [r("Bien. Tout le monde peut se tromper, ce qui compte c'est la suite.", "neutral")],
+                    consequence: { tone: "good", title: "Tu assumes", text: "Reconnaître une erreur et agir tout de suite limite les dégâts." },
+                    deltas: { safety: 10, trust: 5 },
+                    setFlags: ["owned_mistake"],
+                },
+            },
+            {
+                id: "blame",
+                label: "Ce n'est pas ma faute : c'est la direction qui a insisté.",
+                outcome: {
+                    reaction: [r("Peut-être. Mais c'est toi qui avais la main…", "angry")],
+                    consequence: { tone: "bad", title: "Tu rejettes la faute", text: "Accuser les autres fait perdre la confiance de l'équipe." },
+                    deltas: { trust: -15 },
+                    setFlags: ["blamed_others"],
+                },
+            },
+        ],
+    },
+
+    /* 4 — Tom : la procédure de sécurité --------------------------------- */
+    {
+        id: "procedure",
+        characterId: "tom",
+        time: "07:50",
+        title: "Tom demande la procédure de sécurité",
+        objectiveId: "secure",
+        opening: (ctx) => [
+            ctx.has("stopped") || ctx.has("degraded")
+                ? say("tom", "E-4 est à l'arrêt. Avant que mon équipe monte dessus, rappelle-moi la procédure de sécurité.", "neutral")
+                : say("tom", "E-4 tourne encore ! Avant que mon équipe monte dessus, rappelle-moi la procédure de sécurité.", "concerned"),
+            say("tom", "Dans quel ordre on fait les choses ?", "thinking"),
+        ],
+        replies: [
+            {
+                id: "right",
+                label: "1. On arrête la machine. 2. On la consigne (cadenas). 3. Seulement après, on monte.",
+                outcome: {
+                    reaction: [r("Exactement. Arrêt, consignation, accès : l'ordre, c'est la sécurité.", "happy")],
+                    consequence: { tone: "good", title: "Procédure respectée", text: "Machine arrêtée puis verrouillée : personne ne peut la redémarrer pendant l'intervention." },
+                    deltas: { safety: 15, trust: 5 },
+                    setFlags: ["secured"],
+                },
+            },
+            {
+                id: "onsite",
+                label: "On monte d'abord, et on coupe une fois sur place.",
+                outcome: {
+                    reaction: [r("Non ! Personne ne monte sur une machine qui peut redémarrer !", "angry")],
+                    consequence: { tone: "bad", title: "Danger de mort évité", text: "Monter avant l'arrêt et le verrouillage : c'est l'accident le plus grave du métier." },
+                    deltas: { safety: -30 },
+                    setFlags: ["skipped_lock"],
+                },
+            },
+            {
+                id: "nolock",
+                label: "On consigne sans arrêter la machine, ça va plus vite.",
+                outcome: {
+                    reaction: [r("On ne peut pas verrouiller une machine qui tourne. Ça ne marche pas comme ça.", "surprised")],
+                    consequence: { tone: "bad", title: "Étapes dans le désordre", text: "On arrête d'abord, on verrouille ensuite. Sauter une étape met tout le monde en danger." },
+                    deltas: { safety: -25 },
+                    setFlags: ["skipped_lock"],
+                },
+            },
+        ],
+    },
+
+    /* 4b — Tom : on reprend la procédure (adaptatif) --------------------- */
+    {
+        id: "procedure_retry",
+        characterId: "tom",
+        time: "08:00",
+        title: "Tom te repose la question, calmement",
+        objectiveId: "secure",
+        when: (ctx) => ctx.has("skipped_lock") && !ctx.has("secured"),
+        opening: [
+            say("tom", "Je ne monte pas tant que ce n'est pas clair. Reprenons, doucement.", "neutral"),
+            say("tom", "Dans quel ordre ?", "thinking"),
+        ],
+        replies: [
+            {
+                id: "right",
+                label: "Arrêt, puis consignation, puis accès.",
+                outcome: {
+                    reaction: [r("Voilà. On peut avancer.", "happy")],
+                    consequence: { tone: "good", title: "Cette fois, c'est bon", text: "La machine est arrêtée et verrouillée avant toute intervention." },
+                    deltas: { safety: 5 },
+                    setFlags: ["secured"],
+                },
+            },
+            {
+                id: "help",
+                label: "Je ne m'en souviens plus, tu peux me le rappeler ?",
+                outcome: {
+                    reaction: [r("Arrêt, consignation, accès. Retiens-le : ça sauve des vies.", "neutral")],
+                    consequence: { tone: "warn", title: "Mieux vaut demander que deviner", text: "Tu as demandé : bien. Mais ces règles doivent devenir un réflexe." },
+                    deltas: { trust: -5 },
+                    setFlags: ["secured", "asked_help"],
+                },
+            },
+        ],
+    },
+
+    /* 5 — Nadia : la météo ----------------------------------------------- */
+    {
+        id: "weather",
+        characterId: "nadia",
+        time: "08:10",
+        title: "Nadia, météo marine, donne sa prévision",
+        objectiveId: "team",
+        opening: (ctx) => [
+            ctx.has("rushed")
+                ? say("nadia", "J'ai entendu qu'on voulait envoyer une équipe en mer tout de suite. Surtout pas !", "concerned")
+                : say("nadia", "Bonjour, ici la météo marine, pour E-4.", "neutral"),
+            say("nadia", "Le vent est à 25 nœuds, mais il va tomber à 18 vers 8 h 30. Vagues : 1,2 mètre. La limite pour monter, c'est 20 nœuds. Fenêtre favorable : de 8 h 30 à 10 h 30.", "neutral"),
+            say("nadia", "Tu décides quoi ?", "thinking"),
+        ],
+        replies: [
+            {
+                id: "wait",
+                label: "On attend 8 h 30 et on part dans la fenêtre météo.",
+                outcome: {
+                    reaction: [r("Bonne décision : à 8 h 30, tu auras des conditions sûres.", "happy")],
+                    consequence: { tone: "good", title: "Tu as respecté la météo", text: "En mer, c'est la météo qui décide. Tu as planifié l'intervention au bon moment." },
+                    deltas: { safety: 10, trust: 5 },
+                    setFlags: ["weather_ok"],
+                },
+            },
+            {
+                id: "now",
+                label: "On part maintenant, on gagne du temps.",
+                outcome: {
+                    reaction: [r("25 nœuds, c'est au-dessus de la limite. Je te le déconseille vraiment.", "concerned")],
+                    consequence: { tone: "bad", title: "Hors des limites de sécurité", text: "Monter avec plus de 20 nœuds de vent est interdit : trop dangereux." },
+                    deltas: { safety: -25 },
+                    setFlags: ["unsafe_window"],
+                },
+            },
+            {
+                id: "cancel",
+                label: "On annule tout, c'est trop risqué.",
+                outcome: {
+                    reaction: [r("C'est prudent. Dommage quand même : la fenêtre de 8 h 30 était bonne.", "neutral")],
+                    consequence: { tone: "warn", title: "Prudent, mais trop", text: "Tu évites tout risque, mais tu gâches une vraie fenêtre d'intervention." },
+                    deltas: { efficiency: -20, trust: -5 },
+                    setFlags: ["weather_ok", "over_cautious"],
+                },
+            },
+        ],
+    },
+
+    /* 6 — Tom : feu vert ? ----------------------------------------------- */
+    {
+        id: "team",
+        characterId: "tom",
+        time: "08:35",
+        title: "Tom : l'équipe est prête, on y va ?",
+        objectiveId: "team",
+        opening: (ctx) => [
+            teamReady(ctx)
+                ? say("tom", "Tout est bon de mon côté : la machine est verrouillée, la fenêtre météo est ouverte, l'équipe est prête.", "happy")
+                : say("tom", "L'équipe est prête à partir. Mais je ne suis pas sûr qu'on ait tout bien vérifié…", "concerned"),
+            say("tom", "Je les envoie ?", "thinking"),
+        ],
+        replies: [
+            {
+                id: "go",
+                label: "Oui, go : toutes les conditions sont réunies.",
+                outcome: (ctx): Outcome =>
+                    teamReady(ctx)
                         ? {
-                              text: "Tu refuses avec des données solides : Marc défend ta position.",
-                              tone: "good",
-                              deltas: { trust: 10, safety: 5 },
-                              setFlags: ["pressure_resisted"],
-                              dialogue: [
-                                  say("player", "Je refuse. Les mesures montrent un défaut de roulement : redémarrer, c'est risquer la casse."),
-                                  say("marc", "Compris, tu as des données solides. Je défends ta position auprès de la direction.", "happy"),
-                              ],
+                              reaction: [r("Parfait, on décolle ! Je te tiens au courant.", "happy")],
+                              consequence: { tone: "good", title: "Intervention lancée au bon moment", text: "Machine verrouillée, météo favorable, équipe prête : tout est réuni." },
+                              deltas: { safety: 10, trust: 10, efficiency: 10 },
+                              setFlags: ["team_sent_ok"],
                           }
                         : {
-                              text: "Tu refuses, mais sans pouvoir l'appuyer sur des preuves.",
-                              tone: "warn",
-                              deltas: { trust: -5, safety: 5 },
-                              setFlags: ["pressure_resisted"],
-                              dialogue: [
-                                  say("player", "Je refuse, je ne le sens pas."),
-                                  say(
-                                      "marc",
-                                      "Je ne peux pas défendre un « je ne le sens pas » face à la direction. La prochaine fois, ramène des preuves.",
-                                      "concerned",
-                                  ),
-                              ],
-                          };
+                              reaction: [r("Attends… il manque quelque chose, non ? Trop tard, ils sont partis.", "surprised")],
+                              consequence: { tone: "bad", title: "Équipe envoyée sans toutes les conditions", text: "Machine non verrouillée ou météo hors limites : l'équipe est en danger." },
+                              deltas: { safety: -30, trust: -10 },
+                              setFlags: ["team_sent_unsafe"],
+                          },
+            },
+            {
+                id: "wait",
+                label: "Pas encore : je veux vérifier qu'il ne manque rien.",
+                outcome: (ctx): Outcome =>
+                    teamReady(ctx)
+                        ? {
+                              reaction: [r("D'accord… tout était vert, mais soit. On part avec un peu de retard.", "neutral")],
+                              consequence: { tone: "warn", title: "Vérification inutile", text: "Tout était réuni : tu as perdu 20 minutes. Mieux vaut trop de prudence que pas assez, mais le temps compte." },
+                              deltas: { efficiency: -10 },
+                              setFlags: ["team_sent_ok"],
+                          }
+                        : {
+                              reaction: [r("Tu as raison. On règle le point qui manque, et on part.", "happy")],
+                              consequence: { tone: "good", title: "Tu as repéré ce qui manquait", text: "Une dernière vérification a évité d'envoyer l'équipe trop tôt." },
+                              deltas: { safety: 10, trust: 10 },
+                              setFlags: ["team_sent_ok", "fixed_late"],
+                          },
+            },
+            {
+                id: "hurry",
+                label: "Envoie-les vite, ne perdons pas de temps !",
+                outcome: (ctx): Outcome =>
+                    teamReady(ctx)
+                        ? {
+                              reaction: [r("Ok, ils partent ! Tu es pressé, mais ça passe.", "neutral")],
+                              consequence: { tone: "warn", title: "Ça passe, de justesse", text: "Cette fois tout était réuni. Sans vérifier, tu as eu de la chance." },
+                              deltas: { efficiency: 5, trust: -5 },
+                              setFlags: ["team_sent_ok"],
+                          }
+                        : {
+                              reaction: [r("Quoi ? Sans que tout soit prêt ? Ils sont déjà partis !", "angry")],
+                              consequence: { tone: "bad", title: "Équipe envoyée trop vite", text: "Tu as envoyé l'équipe alors qu'une condition de sécurité manquait." },
+                              deltas: { safety: -35, trust: -15 },
+                              setFlags: ["team_sent_unsafe"],
+                          },
+            },
+        ],
+    },
+
+    /* 7 — Marc : le compte rendu ------------------------------------------ */
+    {
+        id: "report",
+        characterId: "marc",
+        time: "10:00",
+        title: "Marc te demande ton compte rendu",
+        objectiveId: "report",
+        opening: (ctx) => [
+            say("marc", "L'équipe est de retour. Merci pour ta permanence.", madeMistake(ctx) ? "concerned" : "happy"),
+            say("marc", "Raconte-moi : comment ça s'est passé ?", "thinking"),
+        ],
+        replies: [
+            {
+                id: "full",
+                label: "Je te fais un compte rendu complet : ce que j'ai vu, décidé, et ce qui n'a pas marché.",
+                outcome: (ctx): Outcome => ({
+                    reaction: [r(madeMistake(ctx) ? "Merci d'être franc sur tes erreurs. C'est comme ça qu'on progresse." : "Très clair, très complet. Bravo.", "happy")],
+                    consequence: { tone: "good", title: "Compte rendu honnête", text: "Dire ce qui s'est vraiment passé, même ce qui a raté, construit la confiance et la sécurité de demain." },
+                    deltas: { trust: 15 },
+                    setFlags: ["reported_honest"],
+                }),
+            },
+            {
+                id: "nothing",
+                label: "Tout s'est bien passé, rien à signaler.",
+                outcome: (ctx): Outcome =>
+                    madeMistake(ctx)
+                        ? {
+                              reaction: [r("Vraiment ? Les journaux disent pourtant autre chose…", "angry")],
+                              consequence: { tone: "bad", title: "Tu as caché des erreurs", text: "Cacher un problème empêche l'équipe d'en tirer des leçons. Ça se voit toujours." },
+                              deltas: { trust: -25 },
+                              setFlags: ["concealed"],
+                          }
+                        : {
+                              reaction: [r("Et c'est la vérité, je l'ai vu dans les journaux. Bien joué.", "happy")],
+                              consequence: { tone: "good", title: "Tout s'est bien passé", text: "Ton résumé correspond aux faits : tu as été clair et honnête." },
+                              deltas: { trust: 5 },
+                              setFlags: ["reported_honest"],
+                          },
+            },
+            {
+                id: "short",
+                label: "Je fais le point vite fait, sans détails.",
+                outcome: {
+                    reaction: [r("Hmm, j'aurais aimé plus de détails pour que l'équipe suivante comprenne.", "neutral")],
+                    consequence: { tone: "warn", title: "Compte rendu trop court", text: "Sans détails, personne ne peut apprendre de ce qui s'est passé." },
                 },
             },
         ],
     },
 ];
-
-/* ------------------------------------------------------------------ */
-/* Événements                                                          */
-/* ------------------------------------------------------------------ */
-
-const events: EventDefinition[] = [
-    {
-        id: "ev_pressure",
-        when: (ctx) => ctx.clock >= at(7, 20) && !ctx.has("team_sent"),
-        resolve: (ctx) => ({
-            title: "Appel de la direction",
-            text: "La direction de la production appuie pour remettre E-4 en service.",
-            tone: "warn",
-            decisionId: "production_pressure",
-            dialogue: [
-                say(
-                    "marc",
-                    ctx.has("stopped")
-                        ? "J'ai la direction de la production en ligne. Ils veulent qu'on redémarre E-4 à 50 % jusqu'à demain. Je ne peux pas décider à ta place : t'en dis quoi ?"
-                        : "J'ai la direction de la production en ligne. Ils veulent maintenir E-4 en service à 50 % jusqu'à demain. T'en dis quoi ?",
-                    "concerned",
-                ),
-            ],
-        }),
-    },
-    {
-        id: "ev_window",
-        when: (ctx) => ctx.clock >= at(8, 0),
-        resolve: (ctx) => ({
-            title: "Météo",
-            text: "La fenêtre d'accès s'ouvre sur la zone du parc.",
-            tone: "good",
-            dialogue: [
-                say(
-                    "nadia",
-                    `Alerte météo : le vent passe à ${ctx.env.wind} nœuds et les vagues à ${fr(ctx.env.wave)} m. La fenêtre d'accès est ouverte.`,
-                    "happy",
-                ),
-            ],
-        }),
-    },
-    {
-        id: "ev_escalation",
-        when: (ctx) => ctx.clock >= at(8, 15) && !ctx.has("stopped"),
-        resolve: () => ({
-            title: "Alarme niveau 2",
-            text: "Les vibrations de E-4 augmentent : elle tourne toujours.",
-            tone: "bad",
-            deltas: { safety: -10, trust: -5 },
-            setFlags: ["escalated"],
-            dialogue: [
-                say("marc", "Alarme niveau 2 sur E-4 : les vibrations ont augmenté de 40 %. Elle tourne toujours ! Il faut l'arrêter.", "angry"),
-            ],
-        }),
-    },
-    {
-        id: "ev_auto_trip",
-        when: (ctx) =>
-            (!ctx.has("stopped") && ctx.clock >= at(9, 0)) || (ctx.has("degraded_mode") && ctx.since("degraded_mode") >= 30),
-        resolve: () => ({
-            title: "Arrêt automatique de sécurité",
-            text: "Le système coupe E-4 de lui-même : la situation a été subie, pas maîtrisée.",
-            tone: "bad",
-            deltas: { safety: -20, trust: -15 },
-            setFlags: ["stopped", "auto_trip"],
-            clearFlags: ["degraded_mode"],
-            dialogue: [
-                say("marc", "Arrêt automatique de sécurité sur E-4. On a laissé la machine aller trop loin : c'est le système qui a décidé à notre place.", "angry"),
-            ],
-        }),
-    },
-];
-
-/* ------------------------------------------------------------------ */
-/* Mission                                                             */
-/* ------------------------------------------------------------------ */
 
 /* ------------------------------------------------------------------ */
 /* Visite guidée vocale (textes écrits à la main, pas un agent IA)      */
 /* ------------------------------------------------------------------ */
 
-/**
- * Ton « commandant » : phrases courtes, ordres à l'impératif, une idée par
- * étape. Les interlocuteurs sont désignés par leur rôle.
- */
+/** Ton « commandant » : phrases courtes, ordres à l'impératif, une idée par étape. */
 const guide: GuideStep[] = [
     {
         id: "welcome",
         targetId: null,
-        title: "Garde à vous, opérateur !",
+        title: "Garde à vous, recrue !",
         speech:
-            "Garde à vous, opérateur ! Ici le commandement. Tu prends l'astreinte sur le parc, et je te briefe tout de suite. Écoute bien ! Je vais te présenter ton écran, une rubrique à la fois. La rubrique dont je parle reste nette, toutes les autres sont floutées. Quand tu as compris, tu appuies sur Entrée. Pas besoin de tout lire : écoute-moi, et suis le cadre doré. En avant !",
+            "Garde à vous, recrue ! Ici le commandement. Je te présente ton écran en quelques secondes. Une zone à la fois : celle dont je parle reste nette, tout le reste est flou. Quand tu as compris, appuie sur Entrée. En avant !",
     },
     {
         id: "mission",
         targetId: "mission",
-        title: "Ton ordre de mission",
-        where: "Colonne de droite, tout en haut",
+        title: "Ta mission",
+        where: "Colonne de droite",
         speech:
-            "Première rubrique : ton ordre de mission ! C'est ici que tout commence. Une alarme de vibrations s'est déclenchée sur l'éolienne E-4, en pleine mer. Ton rôle : technicien de maintenance d'astreinte. Tu as quatre objectifs, dans l'ordre. Un : comprendre d'où vient l'alerte. Deux : mettre la machine en sécurité. Trois : décider quand envoyer l'équipe. Quatre : rendre compte à ton responsable. Chaque objectif accompli se coche tout seul. Et tout doit être bouclé avant dix heures trente !",
+            "Première zone : ta mission ! Tu es de permanence sur un parc d'éoliennes en mer. Une alarme vient de se déclencher sur l'éolienne E-4. Tu as quatre objectifs : comprendre l'alerte, mettre la machine en sécurité, envoyer l'équipe au bon moment, et rendre compte honnêtement. Chaque objectif atteint se coche tout seul !",
     },
     {
         id: "status",
@@ -886,367 +549,159 @@ const guide: GuideStep[] = [
         title: "Tes jauges",
         where: "Bandeau en haut de l'écran",
         speech:
-            "Deuxième rubrique : tes jauges ! Elles sont en haut, et elles ne mentent jamais. Sécurité : les personnes et la machine sont-elles protégées ? Diagnostic : as-tu vraiment compris le problème ? Confiance : ton responsable et l'équipe croient-ils en toi ? Chaque décision les fait bouger, en bien ou en mal. Garde un œil dessus en permanence. Et surveille l'heure, en haut à droite : chaque vérification coûte du temps !",
+            "Deuxième zone : tes jauges ! Sécurité, confiance, efficacité. Chaque réponse les fait monter ou descendre, et tu vois tout de suite de combien. Attention : si la sécurité tombe à zéro, la mission s'arrête !",
     },
     {
         id: "call",
         targetId: "call",
-        title: "Ton interlocuteur",
-        where: "Colonne de gauche, en haut",
+        title: "Qui te parle",
+        where: "En haut de la conversation",
         speech:
-            "Troisième rubrique : ton interlocuteur ! C'est la personne qui te parle en ce moment. Son portrait, son rôle, et ce qu'elle te dit. Ton responsable d'exploitation te donne le cap. Le prévisionniste météo marine et le chef d'équipe de maintenance sont joignables, eux aussi. Lis bien ce qu'ils disent : leurs paroles sont des indices !",
+            "Troisième zone : qui te parle ! Tu vois la personne qui vient te voir, son métier, l'heure, et l'objectif concerné. Son visage change selon son humeur : rassuré, inquiet, ou furieux !",
     },
     {
-        id: "outcome",
-        targetId: "outcome",
-        title: "Les conséquences",
-        where: "Colonne de gauche, sous ton interlocuteur",
+        id: "chat",
+        targetId: "chat",
+        title: "La conversation",
+        where: "Au milieu de l'écran",
         speech:
-            "Quatrième rubrique : les conséquences ! Chaque fois que tu agis, le résultat s'affiche ici. Ce que tu viens de découvrir, ce que ça a coûté en minutes, et les événements qui surviennent pendant ce temps. Un appel, une alarme, un changement de météo : tout tombe ici. Ne le rate jamais !",
+            "Quatrième zone : la conversation ! Tout ce qui se dit s'écrit ici, comme dans une messagerie. Les conséquences de tes choix aussi, sur des cartes colorées avec le détail des jauges. Lis-les : c'est comme ça que tu apprends le métier !",
     },
     {
-        id: "tools",
-        targetId: "tools",
-        title: "Ton poste de travail",
-        where: "Colonne de gauche, en bas, avec ses onglets",
+        id: "replies",
+        targetId: "replies",
+        title: "Tes réponses",
+        where: "En bas de la conversation",
         speech:
-            "Cinquième rubrique : ton poste de travail ! C'est ici que tu enquêtes. Trois onglets, comme des dossiers. Supervision : les mesures de la machine, en direct. Documents : les procédures de sécurité. Radio : tu appelles la météo, l'équipe, ton responsable. Rien n'est donné d'avance : à toi d'aller chercher l'information ! Chaque recherche prend du temps, alors choisis bien.",
-    },
-    {
-        id: "conditions",
-        targetId: "conditions",
-        title: "Les conditions à réunir",
-        where: "Colonne de droite, sous l'ordre de mission",
-        speech:
-            "Sixième rubrique : les conditions d'intervention ! C'est ta liste de contrôle avant d'envoyer l'équipe en mer. Une case verte, c'est validé. Une case rouge, pas encore. Un rond gris, tu n'as pas encore l'information. Tant que tout n'est pas vert, personne ne monte sur la machine. La sécurité, ça ne se négocie pas !",
-    },
-    {
-        id: "commands",
-        targetId: "commands",
-        title: "Tes commandes",
-        where: "Colonne de droite, sous les conditions",
-        speech:
-            "Septième rubrique : tes commandes ! Ce sont les ordres que tu peux donner : poser ton diagnostic, arrêter la machine, la consigner, envoyer l'équipe, clôturer. Un cadenas, c'est que l'ordre est bloqué, et la raison est écrite juste dessous. Attention : respecte l'ordre des opérations. Arrêt, puis consignation, puis accès. L'ordre, c'est la sécurité !",
-    },
-    {
-        id: "history",
-        targetId: "history",
-        title: "L'historique",
-        where: "Colonne de droite, tout en bas",
-        speech:
-            "Huitième et dernière rubrique : l'historique ! Tous les échanges y sont gardés. Si tu as raté une réplique, tu l'ouvres et tu la relis. Rien ne se perd.",
+            "Cinquième zone : tes réponses ! Tu choisis ce que tu dis. Clique, ou tape le chiffre au clavier. Chaque réponse a ses conséquences, et le personnage réagit à ce que tu dis. Réfléchis, puis réponds !",
     },
     {
         id: "final",
         targetId: "all",
         title: "À toi de jouer !",
         speech:
-            "Voilà, opérateur, tu as tout vu. Résumé : observe, enquête, décide, assume ! Quand une décision importante se présente, une fiche s'ouvre au centre de l'écran. Prends ton temps pour la lire. Si tu veux m'écouter de nouveau, le bouton « Revoir le guide » est en haut à droite. Maintenant, au travail. Bonne chance !",
+            "C'est tout, recrue ! Quelqu'un arrive, tu écoutes, tu réponds, tu assumes les conséquences. Si tu veux me réécouter, clique sur « Revoir le guide » en haut. Bonne chance !",
     },
 ];
 
-export const offshoreTurbineMission: MissionDefinition = {
-    id: "offshore-gearbox-alert",
-    title: "Alerte multiplicateur · E-4",
-    role: "Technicien·ne de maintenance éolienne offshore (astreinte)",
-    sector: "Énergie · éolien en mer",
-    location: "Parc éolien offshore · éolienne E-4",
-    summary:
-        "Une alarme de vibrations est active sur le multiplicateur de l'éolienne E-4. Tu dois comprendre ce qui se passe, protéger les personnes et la machine, puis décider si et quand envoyer une équipe en mer.",
-    startClock: START,
-    deadlineClock: DEADLINE,
+/* ------------------------------------------------------------------ */
+/* Fin de mission et bilan                                             */
+/* ------------------------------------------------------------------ */
 
-    guide,
+const evaluateEnd = (ctx: GameContext, cause: "completed" | "critical"): EndResult => {
+    if (cause === "critical") {
+        return { status: "failure", reason: "La jauge de sécurité est tombée à zéro : dans la vraie vie, la mission serait arrêtée et une enquête ouverte." };
+    }
+    const done = objectives.filter((objective) => objective.isComplete(ctx)).length;
+    if (done === objectives.length && ctx.indicators.safety >= 50) {
+        return { status: "success", reason: "Tous les objectifs sont atteints et la sécurité a été préservée." };
+    }
+    if (done >= 2) {
+        return { status: "partial", reason: `${done} objectifs sur ${objectives.length} atteints : il reste des points à améliorer.` };
+    }
+    return { status: "failure", reason: "Trop peu d'objectifs atteints : la situation n'a pas été maîtrisée." };
+};
+
+const clampScore = (value: number) => Math.max(0, Math.min(100, value));
+
+const mission: MissionDefinition = {
+    id: "offshore-gearbox-alert",
+    title: "Alerte sur l'éolienne E-4",
+    role: "Responsable de permanence d'un parc éolien en mer",
+    sector: "Énergie · éolien en mer",
+    location: "Centre de contrôle du parc éolien",
+    summary:
+        "Une alarme se déclenche sur une éolienne en mer. Les gens viennent te parler, tu réponds et tu décides : chaque réponse a des conséquences.",
 
     briefing: {
         eyebrow: "PRISE DE POSTE · 06:40",
-        headline: "Tu prends l'astreinte au centre de supervision du parc",
+        headline: "Tu prends la permanence du parc éolien en mer",
         narrative: [
-            "Il est 6 h 40. Le jour se lève sur la mer. Une alarme de vibrations vient de se déclencher sur le multiplicateur de l'éolienne E-4, à plusieurs kilomètres des côtes.",
-            "Ton responsable, Marc, est en ligne. À la radio, tu peux joindre la météo marine et le chef d'équipe de maintenance.",
+            "Il est 6 h 40. Une alarme vient de se déclencher sur l'éolienne E-4, à plusieurs kilomètres des côtes.",
+            "Pendant la matinée, plusieurs personnes vont venir te parler : ton responsable, le chef d'équipe, la météo, la direction. À chaque fois, tu choisis ta réponse, et tu en assumes les conséquences.",
         ],
         roleSummary:
-            "Un technicien de maintenance éolienne ne fait pas que réparer : il diagnostique, applique des procédures de sécurité strictes, coordonne des équipes et décide au bon moment, souvent sous contrainte de météo et de production.",
-        objectives: [
-            "Comprendre l'origine de l'alerte",
-            "Protéger les personnes et la machine",
-            "Décider si et quand envoyer une équipe en mer",
-            "Rendre compte à ton responsable",
-        ],
-        howToPlay: [
-            { title: "Observe", text: "Rien n'est donné d'avance. Explore tes outils et interroge tes interlocuteurs." },
-            { title: "Agis", text: "Chaque vérification prend du temps, et le temps est compté." },
-            { title: "Assume", text: "Tes décisions ont des conséquences sur la sécurité, la confiance et le résultat." },
-        ],
+            "Un responsable de permanence ne répare pas : il écoute, comprend, protège les personnes et décide au bon moment, souvent sous la pression de la production et de la météo.",
+        objectives: objectives.map((objective) => objective.label),
     },
 
+    guide,
+
     indicators: [
-        { id: "safety", label: "Sécurité", meaning: "Maîtrise des risques pour les personnes et la machine.", icon: "shield", initial: 70 },
-        { id: "diagnostic", label: "Diagnostic", meaning: "Qualité de ta compréhension du problème, fondée sur des données.", icon: "gauge", initial: 10 },
-        { id: "trust", label: "Confiance", meaning: "Confiance que Marc et l'équipe t'accordent.", icon: "handshake", initial: 50 },
+        { id: "safety", label: "Sécurité", meaning: "Les personnes et la machine sont-elles protégées ? À zéro, la mission s'arrête.", icon: "shield", initial: 70, critical: true },
+        { id: "trust", label: "Confiance", meaning: "L'équipe et ton responsable te font-ils confiance ?", icon: "handshake", initial: 50 },
+        { id: "efficiency", label: "Efficacité", meaning: "Le parc produit-il et le temps est-il bien utilisé ?", icon: "gauge", initial: 50 },
     ],
 
     characters: [
         { id: "marc", name: "Marc", role: "Responsable d'exploitation", avatarUrl: null, expression: "neutral", dialogue: "", status: "idle" },
-        { id: "nadia", name: "Nadia", role: "Prévisionniste météo marine", avatarUrl: null, expression: "neutral", dialogue: "", status: "idle" },
         { id: "tom", name: "Tom", role: "Chef d'équipe maintenance", avatarUrl: null, expression: "neutral", dialogue: "", status: "idle" },
+        { id: "nadia", name: "Nadia", role: "Prévisionniste météo marine", avatarUrl: null, expression: "neutral", dialogue: "", status: "idle" },
+        { id: "claire", name: "Claire Duval", role: "Direction de la production", avatarUrl: null, expression: "neutral", dialogue: "", status: "idle" },
     ],
 
-    openingDialogue: [
-        say(
-            "marc",
-            "Salut. Alarme de vibrations sur le multiplicateur d'E-4 depuis 5 h 52, et le vent est à 25 nœuds. Je ne veux aucune intervention avant d'y voir clair. Tu as la main : explore, vérifie, et tiens-moi au courant.",
-            "concerned",
-        ),
-    ],
+    encounters,
+    objectives,
+    evaluateEnd,
 
-    tools: [
-        {
-            id: "supervision",
-            label: "Supervision",
-            subtitle: "SCADA · E-4",
-            icon: "monitor",
-            kind: "dashboard",
-            description: "Poste de supervision du parc. Examine les données de E-4 : chaque vérification prend du temps.",
-            placement: "workspace",
-        },
-        {
-            id: "documents",
-            label: "Documents",
-            subtitle: "Procédures",
-            icon: "file",
-            kind: "documents",
-            description: "Dossier technique et procédures. Ouvre un document pour en découvrir le contenu.",
-            placement: "workspace",
-        },
-        {
-            id: "radio",
-            label: "Radio",
-            subtitle: "Canal 04",
-            icon: "radio",
-            kind: "radio",
-            description: "Joins tes interlocuteurs. Chaque échange prend du temps.",
-            placement: "workspace",
-        },
-        {
-            id: "command",
-            label: "Commandes",
-            subtitle: "Décisions",
-            icon: "wrench",
-            kind: "commands",
-            description: "Décisions et commandes sur la machine.",
-            placement: "actions",
-        },
-    ],
-
-    actions,
-    decisions,
-    events,
-
-    objectives: [
-        { id: "understand", label: "Comprendre l'origine de l'alerte", isComplete: (ctx) => ctx.has("diag_ok") },
-        {
-            id: "secure",
-            label: "Mettre E-4 en sécurité (arrêt + consignation)",
-            isComplete: (ctx) => ctx.has("stopped") && ctx.has("locked"),
-        },
-        { id: "decide", label: "Envoyer l'équipe au bon moment", isComplete: (ctx) => ctx.has("team_sent") },
-        { id: "report", label: "Rendre compte à Marc", isComplete: (ctx) => ctx.isDone("cmd_close") },
-    ],
-
-    infoItems: [
-        { id: "window", kind: "constraint", text: "Tout doit être bouclé avant 10 h 30, fin de ton astreinte." },
-        { id: "risk", kind: "risk", text: "Le multiplicateur se dégrade tant que E-4 tourne." },
-        { id: "who", kind: "info", text: "Marc dirige l'exploitation, Nadia suit la météo marine, Tom dirige l'équipe de maintenance." },
-        { id: "limits", kind: "constraint", text: "Accès nacelle : vent ≤ 20 nœuds et vagues ≤ 1,5 m.", revealWhen: (ctx) => ctx.has("procedure_read") },
-        { id: "order", kind: "constraint", text: "Ordre imposé : arrêt, puis consignation, puis accès.", revealWhen: (ctx) => ctx.has("procedure_read") },
-        { id: "hse", kind: "constraint", text: "Les limites de sécurité ne se négocient pas, même sous pression.", revealWhen: (ctx) => ctx.has("hse_read") },
-        { id: "forecast", kind: "info", text: "Fenêtre météo utile : environ 8 h à 10 h 30.", revealWhen: (ctx) => ctx.has("weather_known") },
-        { id: "diag", kind: "info", text: "Diagnostic retenu : usure d'un roulement de l'arbre rapide.", revealWhen: (ctx) => ctx.has("diag_ok") },
-    ],
-
-    environment: (clock) => ({
-        wind: Math.round(interpolate(WIND, clock)),
-        wave: Math.round(interpolate(WAVES, clock) * 10) / 10,
-    }),
-
-    readouts: (ctx) => {
-        const stopped = ctx.has("stopped");
-        const elapsed = Math.max(0, ctx.clock - START);
-        const vibration = 7.1 + elapsed * 0.025 + (ctx.has("escalated") ? 3 : 0);
-        const oilTemp = stopped ? Math.max(40, 82 - Math.max(0, ctx.since("stopped")) * 0.4) : 82 + Math.floor(elapsed / 30);
-        const limitKnown = ctx.has("procedure_read");
-        return [
-            {
-                id: "wind",
-                label: "Vent",
-                value: `${ctx.env.wind} nœuds`,
-                tone: ctx.env.wind > WIND_LIMIT ? "warn" : "good",
-                hint: limitKnown ? `Limite d'accès : ${WIND_LIMIT} nœuds` : undefined,
-            },
-            {
-                id: "wave",
-                label: "Vagues (Hs)",
-                value: `${fr(ctx.env.wave)} m`,
-                tone: ctx.env.wave > WAVE_LIMIT ? "warn" : "good",
-                hint: limitKnown ? `Limite d'accès : ${fr(WAVE_LIMIT)} m` : undefined,
-            },
-            {
-                id: "state",
-                label: "État de E-4",
-                value: ctx.has("locked") ? "Consignée" : stopped ? "À l'arrêt" : "En rotation",
-                tone: ctx.has("locked") ? "good" : stopped ? "neutral" : "bad",
-            },
-            { id: "rotor", label: "Vitesse rotor", value: stopped ? "0 tr/min" : "12,4 tr/min", tone: "neutral" },
-            {
-                id: "vibration",
-                label: "Vibration multiplicateur",
-                value: stopped ? "— (à l'arrêt)" : `${fr(Number(vibration.toFixed(1)))} mm/s`,
-                tone: stopped ? "neutral" : "bad",
-                hint: stopped ? undefined : "Seuil d'alarme : 7,0 mm/s",
-            },
-            {
-                id: "oil",
-                label: "Température d'huile",
-                value: `${Math.round(oilTemp)} °C`,
-                tone: oilTemp > 75 ? "warn" : "good",
-            },
-        ];
-    },
-
-    readiness: (ctx) => {
-        if (!ctx.has("procedure_read")) {
-            return [
-                {
-                    id: "unknown",
-                    label: "Conditions d'intervention inconnues",
-                    status: "unknown",
-                    detail: "Consulte la procédure PROC-SEC-04 pour les découvrir.",
-                },
-            ];
-        }
-        return [
-            { id: "diag", label: "Diagnostic posé", status: ctx.has("diag_ok") ? "ok" : "ko" },
-            { id: "stop", label: "Rotor à l'arrêt", status: ctx.has("stopped") ? "ok" : "ko" },
-            { id: "lock", label: "Machine consignée (LOTO)", status: ctx.has("locked") ? "ok" : "ko" },
-            {
-                id: "weather",
-                label: "Vent ≤ 20 nœuds · vagues ≤ 1,5 m",
-                status: windowOpen(ctx) ? "ok" : "ko",
-                detail: `Actuellement ${ctx.env.wind} nœuds · ${fr(ctx.env.wave)} m`,
-            },
-            { id: "brief", label: "Équipe briefée", status: ctx.has("team_briefed") ? "ok" : "ko" },
-            {
-                id: "time",
-                label: `Au moins ${TEAM_DURATION} min avant la fin de la fenêtre`,
-                status: ctx.remaining >= TEAM_DURATION ? "ok" : "ko",
-                detail: `${ctx.remaining} min restantes`,
-            },
-        ];
-    },
-
-    evaluateEnd: (ctx) => {
-        if (ctx.indicators.safety <= 0) {
-            return {
-                status: "failure",
-                reason: "Un incident de sécurité grave a stoppé la mission : la cellule HSE a repris la main.",
-                dialogue: [say("marc", "Stop. On arrête tout, la cellule HSE prend la main. On analysera ce qui s'est passé.", "angry")],
-            };
-        }
-        if (ctx.remaining <= 0 && !ctx.has("team_sent")) {
-            const secured = ctx.has("stopped") && ctx.has("locked");
-            return secured
-                ? {
-                      status: "partial",
-                      reason: "La fenêtre météo s'est refermée avant l'envoi de l'équipe. La machine est sécurisée, l'inspection est reportée.",
-                      dialogue: [say("marc", "La fenêtre est fermée. E-4 est sécurisée, c'est l'essentiel : on reprogramme l'inspection.", "neutral")],
-                  }
-                : {
-                      status: "failure",
-                      reason: "La fenêtre météo s'est refermée alors que E-4 n'était pas sécurisée et qu'aucune équipe n'a pu intervenir.",
-                      dialogue: [say("marc", "Fenêtre fermée, machine toujours pas sécurisée et aucune inspection. On est dans une mauvaise situation.", "angry")],
-                  };
-        }
-        return null;
-    },
-
-    debrief: ({ ctx, result, blockedAttempts, missed }) => {
-        const evidence = ctx.doneCount(EVIDENCE_IDS);
-        const analysisScore = Math.min(
-            100,
-            Math.round((evidence / EVIDENCE_IDS.length) * 70) + (ctx.has("diag_ok") ? (ctx.has("diag_weak") ? 15 : 30) : 0),
+    debrief: ({ result, ctx }) => {
+        const analysis = ctx.has("diag_ok") ? (ctx.has("diag_wrong") ? 55 : ctx.has("checked_data") ? 100 : 80) : 20;
+        const safety = clampScore((ctx.has("secured") ? 100 : 30) - (ctx.has("skipped_lock") ? 40 : 0) - (ctx.has("team_sent_unsafe") ? 30 : 0));
+        const pressure = clampScore(
+            (ctx.has("pressure_resisted") ? 100 : ctx.has("pressure_delayed") ? 70 : 20) + (ctx.has("owned_mistake") ? 10 : 0) - (ctx.has("blamed_others") ? 20 : 0),
         );
-        const procedureScore = Math.min(
-            100,
-            Math.max(
-                0,
-                (ctx.has("procedure_read") ? 30 : 0) +
-                    (ctx.has("stopped") ? 20 : 0) +
-                    (ctx.has("locked") ? 20 : 0) +
-                    Math.max(0, 30 - blockedAttempts * 10) -
-                    (ctx.has("auto_trip") ? 20 : 0),
-            ),
-        );
-        const communicationScore = Math.min(100, Math.round(ctx.indicators.trust));
-        const timeScore = Math.min(
-            100,
-            (ctx.has("weather_known") ? 40 : 0) + Math.round((ctx.remaining / (DEADLINE - START)) * 100 * 0.6),
-        );
+        const weather = ctx.has("weather_ok") ? (ctx.has("over_cautious") ? 65 : 100) : ctx.has("unsafe_window") ? 10 : 30;
+        const communication = clampScore((ctx.has("reported_honest") ? 100 : ctx.has("concealed") ? 5 : 50) - (ctx.has("blamed_others") ? 20 : 0));
 
-        const headline =
-            result.status === "success"
-                ? "Mission accomplie"
-                : result.status === "partial"
-                  ? "Mission partiellement remplie"
-                  : "Mission interrompue";
+        const headlines = {
+            success: "Mission réussie !",
+            partial: "Mission en demi-teinte",
+            failure: "Mission échouée",
+        } as const;
 
         return {
-            headline,
+            headline: headlines[result.status],
             summary: result.reason,
             skills: [
                 {
                     label: "Analyse et diagnostic",
-                    score: analysisScore,
-                    comment: ctx.has("diag_ok")
-                        ? ctx.has("diag_weak")
-                            ? `Bon diagnostic, mais appuyé sur ${evidence} vérification${evidence > 1 ? "s" : ""} seulement : un diagnostic se prouve.`
-                            : `Diagnostic juste et étayé par ${evidence} vérifications. C'est le cœur du métier.`
-                        : "Le diagnostic n'a pas été posé : on n'agit pas sur une machine qu'on ne comprend pas.",
+                    score: analysis,
+                    comment: ctx.has("checked_data") ? "Tu as regardé les mesures avant de conclure : c'est la base." : "Pense à vérifier les données avant de te prononcer.",
                 },
                 {
-                    label: "Respect des procédures de sécurité",
-                    score: procedureScore,
-                    comment:
-                        blockedAttempts > 0
-                            ? `${blockedAttempts} tentative${blockedAttempts > 1 ? "s" : ""} bloquée${blockedAttempts > 1 ? "s" : ""} par la procédure : l'ordre arrêt, consignation, accès n'est pas négociable.`
-                            : ctx.has("procedure_read")
-                              ? "Tu as lu la procédure et respecté son ordre."
-                              : "Tu n'as pas consulté la procédure : en situation réelle, c'est le premier réflexe.",
+                    label: "Respect des règles de sécurité",
+                    score: safety,
+                    comment: ctx.has("skipped_lock") ? "Tu as sauté une étape de la procédure : l'ordre arrêt, consignation, accès ne se négocie pas." : "Tu as respecté l'ordre arrêt, consignation, accès.",
                 },
                 {
-                    label: "Communication et posture",
-                    score: communicationScore,
+                    label: "Tenir face à la pression",
+                    score: pressure,
                     comment: ctx.has("pressure_resisted")
-                        ? "Tu as tenu ta position face à la pression de la production."
-                        : ctx.has("degraded_mode") || ctx.has("auto_trip")
-                          ? "La pression de la production a pesé plus lourd que les risques techniques."
-                          : "La confiance se construit avec des échanges clairs et des décisions argumentées.",
+                        ? "Tu as dit non à la pression avec des arguments précis."
+                        : ctx.has("degraded")
+                          ? "Tu as cédé à la pression de la production et la machine en a payé le prix."
+                          : "Tu as gagné du temps plutôt que de trancher : parfois utile, rarement suffisant.",
                 },
                 {
-                    label: "Gestion du temps et de la météo",
-                    score: timeScore,
-                    comment: ctx.has("weather_known")
-                        ? "Tu as anticipé la fenêtre météo au lieu de la subir."
-                        : "Tu n'as pas interrogé la météo marine : en mer, c'est elle qui décide.",
+                    label: "Météo et timing",
+                    score: weather,
+                    comment: ctx.has("unsafe_window") ? "Tu as voulu agir hors des limites de vent : en mer, la météo décide." : "Tu as tenu compte de la fenêtre météo.",
+                },
+                {
+                    label: "Communication honnête",
+                    score: communication,
+                    comment: ctx.has("concealed") ? "Tu as caché des erreurs à ton responsable : ça casse la confiance." : ctx.has("reported_honest") ? "Ton compte rendu était clair et franc." : "Ton compte rendu manquait de détails.",
                 },
             ],
             insights: [
-                "On diagnostique avec des données avant d'agir : l'urgence ne remplace pas l'analyse.",
+                "On comprend avant d'agir : l'urgence ne remplace pas l'analyse.",
                 "Les procédures de sécurité ont un ordre précis. Arrêt, consignation, accès : l'ordre est la sécurité.",
-                "En mer, la météo décide. Une fenêtre d'intervention se planifie, elle ne se force pas.",
-                "Savoir dire non à la pression de la production, avec des faits, fait partie du métier.",
-                ...(missed.length > 0 ? [`Tu n'as pas exploré : ${missed.join(" ; ")}.`] : []),
+                "En mer, la météo décide. Une intervention se planifie dans la bonne fenêtre, elle ne se force pas.",
+                "Savoir dire non à la pression, avec des faits, fait partie du métier.",
+                "Reconnaître ses erreurs et le dire honnêtement permet à toute l'équipe de progresser.",
             ],
         };
     },
 };
+
+export const offshoreTurbineMission = mission;

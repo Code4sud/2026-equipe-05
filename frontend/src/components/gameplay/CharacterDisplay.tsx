@@ -1,7 +1,7 @@
 import { useState } from "react";
 import type { Character } from "./types";
-import { COMM_STATUS, EXPRESSIONS, LABEL, MUTED, SURFACE, SURFACE_INNER } from "./ui";
-import { useTypewriter } from "./hooks";
+import { Clock, Target } from "lucide-react";
+import { COMM_STATUS, EXPRESSIONS, MUTED, SURFACE } from "./ui";
 
 /**
  * Affichage générique des interlocuteurs.
@@ -34,7 +34,7 @@ const NeutralAvatar = ({ seed }: { seed: string }) => {
 };
 
 /** Portrait rond avec anneau d'expression ; bascule sur le portrait neutre si l'image échoue. */
-const Portrait = ({ character, size }: { character: Character; size: string }) => {
+export const Portrait = ({ character, size }: { character: Character; size: string }) => {
     const [failed, setFailed] = useState(false);
     const expression = EXPRESSIONS[character.expression] ?? EXPRESSIONS.neutral;
     const showImage = !!character.avatarUrl && !failed;
@@ -54,7 +54,7 @@ const Portrait = ({ character, size }: { character: Character; size: string }) =
     );
 };
 
-const StatusLine = ({ character }: { character: Character }) => {
+export const StatusLine = ({ character }: { character: Character }) => {
     const expression = EXPRESSIONS[character.expression] ?? EXPRESSIONS.neutral;
     const status = COMM_STATUS[character.status] ?? COMM_STATUS.idle;
     const ExpressionIcon = expression.icon;
@@ -90,7 +90,7 @@ export const CharacterDisplay = ({ character }: { character: Character }) => (
 
 /** Affiche un ou plusieurs interlocuteurs côte à côte. */
 export const CharacterGroup = ({ characters }: { characters: Character[] }) => (
-    <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
+    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
         {characters.map((character) => (
             <CharacterDisplay key={character.id} character={character} />
         ))}
@@ -98,68 +98,40 @@ export const CharacterGroup = ({ characters }: { characters: Character[] }) => (
 );
 
 /* ------------------------------------------------------------------ */
-/* Scène d'appel (jeu) : celui qui parle au premier plan               */
+/* En-tête de la rencontre : qui te parle, à quelle heure, pour quel objectif */
 /* ------------------------------------------------------------------ */
 
-const pickSpeaker = (characters: Character[]): Character | undefined =>
-    characters.find((c) => c.status === "speaking") ?? [...characters].reverse().find((c) => c.dialogue) ?? characters[0];
+interface CallHeaderProps {
+    character: Character;
+    title: string;
+    time: string;
+    objectiveLabel?: string;
+}
 
-export const CallStage = ({ characters }: { characters: Character[] }) => {
-    const speaker = pickSpeaker(characters);
-    const speaking = speaker?.status === "speaking";
-    const { shown, done, skip } = useTypewriter(speaker?.dialogue ?? "", speaking);
-    if (!speaker) return null;
-
-    return (
-        <section className={`${SURFACE} p-5`} aria-label="Interlocuteurs">
-            <p className={`${LABEL} mb-3`}>EN LIGNE</p>
-
-            <div className="flex items-start gap-4">
-                <Portrait character={speaker} size="h-20 w-20" />
-                <div className="min-w-0 flex-1">
-                    <div className="flex flex-wrap items-baseline gap-x-3">
-                        <p className="text-lg font-bold">{speaker.name}</p>
-                        <p className={`text-sm ${MUTED}`}>{speaker.role}</p>
-                    </div>
-                    <StatusLine character={speaker} />
-
-                    <button
-                        type="button"
-                        onClick={skip}
-                        disabled={done}
-                        aria-label="Afficher la réplique en entier"
-                        className={`${SURFACE_INNER} mt-3 block min-h-[4.5rem] w-full p-3.5 text-left text-base leading-relaxed disabled:cursor-default`}
-                    >
-                        {speaker.dialogue ? (
-                            <>
-                                « {shown}
-                                {done ? " »" : <span className="ml-0.5 inline-block h-4 w-1 animate-pulse bg-[#2b2a26] align-middle motion-reduce:animate-none" />}
-                            </>
-                        ) : (
-                            <span className={`italic ${MUTED}`}>Pas encore de contact.</span>
-                        )}
-                    </button>
-                </div>
+export const CallHeader = ({ character, title, time, objectiveLabel }: CallHeaderProps) => (
+    <section className={`${SURFACE} flex flex-wrap items-center gap-x-5 gap-y-3 p-4`} aria-label="Interlocuteur">
+        <Portrait character={character} size="h-16 w-16" />
+        <div className="min-w-0 flex-1">
+            <p className="text-lg font-bold leading-tight">{character.name}</p>
+            <p className={`text-sm ${MUTED}`}>{character.role}</p>
+            <div className="mt-1">
+                <StatusLine character={character} />
             </div>
-
-            <ul className="mt-4 flex flex-wrap gap-2 border-t border-[#ddd2b6] pt-3" aria-label="Contacts">
-                {characters.map((character) => {
-                    const active = character.id === speaker.id;
-                    return (
-                        <li
-                            key={character.id}
-                            className={`flex items-center gap-2 rounded-full border py-1 pl-1 pr-3 text-sm ${
-                                active ? "border-[#2b2a26] bg-[#faf6ea] font-semibold" : "border-[#ddd2b6] text-[#6b6657]"
-                            }`}
-                        >
-                            <Portrait character={character} size="h-7 w-7" />
-                            {character.name}
-                        </li>
-                    );
-                })}
-            </ul>
-        </section>
-    );
-};
+        </div>
+        <div className="min-w-0 basis-full space-y-1.5 border-t border-[#ddd2b6] pt-3 sm:basis-auto sm:border-l sm:border-t-0 sm:pl-5 sm:pt-0">
+            <p className="text-sm font-semibold leading-snug">{title}</p>
+            <p className={`flex flex-wrap items-center gap-x-4 gap-y-1 text-xs ${MUTED}`}>
+                <span className="flex items-center gap-1.5 font-mono font-bold">
+                    <Clock size={13} /> {time}
+                </span>
+                {objectiveLabel && (
+                    <span className="flex items-center gap-1.5">
+                        <Target size={13} /> Objectif : {objectiveLabel}
+                    </span>
+                )}
+            </p>
+        </div>
+    </section>
+);
 
 export default CharacterDisplay;

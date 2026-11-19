@@ -1,56 +1,39 @@
-/**
- * Moteur de simulation frontend : fonctions pures, sans backend.
- *
- * Il applique les règles décrites par une `MissionDefinition` :
- * actions, décisions, temps qui passe, événements, indicateurs, fin de mission.
- *
- * FUTURE INTEGRATION BACKEND :
- * `performAction` et `chooseDecision` sont les deux points où l'action du
- * joueur devra être transmise à la session côté serveur. Ici, la résolution
- * est locale et simulée (pré-alpha) : ce n'est pas une réponse d'agent IA.
- */
-
 import type {
-    ActionDefinition,
-    ActionOutcome,
-    Availability,
-    Character,
+    ChatEntry,
+    ChatTranscriptLine,
+    DebriefContent,
     DialogueInput,
-    EndCondition,
+    Encounter,
     GameContext,
     IndicatorView,
     MissionDefinition,
-    OutcomeNotice,
+    Outcome,
+    PlayerReply,
+    ReplyOption,
     SimulationState,
     Tone,
 } from "./types";
 
-const clamp = (value: number, min = 0, max = 100) => Math.min(max, Math.max(min, value));
+/**
+ * Moteur de simulation : fonctions pures, sans React ni réseau.
+ *
+ * Boucle : briefing → (rencontre → réponse → réaction + conséquences) × N → bilan.
+ * Le moteur ne décide jamais de la réaction d'un personnage : il applique le
+ * `Outcome` fourni par le répondant (voir `Responder` dans `types.ts`).
+ *
+ * FUTURE INTEGRATION BACKEND :
+ * l'état pourrait être persisté / validé côté serveur ; les fonctions ci-dessous
+ * en décrivent déjà toutes les transitions.
+ */
+
+const clamp = (value: number) => Math.max(0, Math.min(100, Math.round(value)));
 
 /* ------------------------------------------------------------------ */
-/* Formats                                                             */
-/* ------------------------------------------------------------------ */
-
-export function formatClock(total: number): string {
-    const hours = Math.floor(total / 60) % 24;
-    const minutes = total % 60;
-    return `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}`;
-}
-
-export function formatDuration(minutes: number): string {
-    const safe = Math.max(0, Math.round(minutes));
-    if (safe < 60) return `${safe} min`;
-    const h = Math.floor(safe / 60);
-    const m = safe % 60;
-    return m === 0 ? `${h} h` : `${h} h ${String(m).padStart(2, "0")}`;
-}
-
-/* ------------------------------------------------------------------ */
-/* Création de l'état                                                  */
+/* Création                                                            */
 /* ------------------------------------------------------------------ */
 
 export function createInitialState(mission: MissionDefinition): SimulationState {
-    const characters: Record<string, Character> = {};
+    const characters: SimulationState["characters"] = {};
     mission.characters.forEach((character) => {
         characters[character.id] = { ...character };
     });
@@ -58,377 +41,270 @@ export function createInitialState(mission: MissionDefinition): SimulationState 
     mission.indicators.forEach((indicator) => {
         indicators[indicator.id] = indicator.initial;
     });
-    const firstWorkspaceTool = mission.tools.find((tool) => tool.placement === "workspace") ?? mission.tools[0];
-
     return {
         phase: "briefing",
-        clock: mission.startClock,
+        step: "asking",
+        characters,
+        encounterId: null,
+        nextEncounterId: null,
+        chat: [],
         indicators,
-        flags: {},
-        flagTimes: {},
-        doneActions: [],
-        findings: {},
-        characters,
-        activeToolId: firstWorkspaceTool.id,
-        dialogue: [],
+        lastDeltas: {},
+        flags: [],
+        choices: {},
         journal: [],
-        pendingDecisionId: null,
-        firedEvents: [],
-        blockedCount: 0,
-        lastTurn: null,
         result: null,
-        seq: 0,
-    };
-}
-
-function cloneState(state: SimulationState): SimulationState {
-    const characters: Record<string, Character> = {};
-    Object.entries(state.characters).forEach(([id, character]) => {
-        characters[id] = { ...character };
-    });
-    return {
-        ...state,
-        indicators: { ...state.indicators },
-        flags: { ...state.flags },
-        flagTimes: { ...state.flagTimes },
-        doneActions: [...state.doneActions],
-        findings: { ...state.findings },
-        characters,
-        dialogue: [...state.dialogue],
-        journal: [...state.journal],
-        firedEvents: [...state.firedEvents],
+        error: null,
+        nextId: 1,
     };
 }
 
 /* ------------------------------------------------------------------ */
-/* Contexte, disponibilité                                             */
+/* Contexte lu par le scénario                                         */
 /* ------------------------------------------------------------------ */
 
-export function buildContext(state: SimulationState, mission: MissionDefinition): GameContext {
+export function buildContext(state: SimulationState): GameContext {
     return {
-        clock: state.clock,
-        remaining: Math.max(0, mission.deadlineClock - state.clock),
-        env: mission.environment(state.clock),
         indicators: state.indicators,
-        has: (flag) => !!state.flags[flag],
-        since: (flag) => (state.flags[flag] ? state.clock - (state.flagTimes[flag] ?? state.clock) : -1),
-        isDone: (id) => state.doneActions.includes(id),
-        doneCount: (ids) => ids.filter((id) => state.doneActions.includes(id)).length,
+        has: (flag) => state.flags.includes(flag),
+        isDone: (encounterId) => encounterId in state.choices,
+        choice: (encounterId) => state.choices[encounterId] ?? null,
     };
 }
 
-export interface ActionStatus {
-    done: boolean;
-    availability: Availability;
+export const getEncounter = (mission: MissionDefinition, id: string | null): Encounter | undefined =>
+    id ? mission.encounters.find((encounter) => encounter.id === id) : undefined;
+
+/** Prochaine rencontre : celle imposée par la réponse, sinon la première éligible dans l'ordre de la mission. */
+export function pickNextEncounter(state: SimulationState, mission: MissionDefinition, forcedId?: string): string | null {
+    const ctx = buildContext(state);
+    if (forcedId) {
+        const forced = getEncounter(mission, forcedId);
+        if (forced && !ctx.isDone(forced.id)) return forced.id;
+    }
+    const next = mission.encounters.find((encounter) => !ctx.isDone(encounter.id) && (encounter.when?.(ctx) ?? true));
+    return next?.id ?? null;
 }
 
-export function getActionStatus(
-    state: SimulationState,
-    mission: MissionDefinition,
-    action: ActionDefinition,
-): ActionStatus {
-    const ctx = buildContext(state, mission);
-    const done = action.doneWhen ? action.doneWhen(ctx) : state.doneActions.includes(action.id);
+export const resolveOutcome = (option: ReplyOption, ctx: GameContext): Outcome =>
+    typeof option.outcome === "function" ? option.outcome(ctx) : option.outcome;
 
-    if (state.result) return { done, availability: { ok: false, reason: "La mission est terminée." } };
-    if (state.pendingDecisionId) {
-        return {
-            done,
-            availability: { ok: false, reason: "Une décision t'attend dans le panneau Communications." },
+export const resolveOpening = (encounter: Encounter, ctx: GameContext): DialogueInput[] =>
+    typeof encounter.opening === "function" ? encounter.opening(ctx) : encounter.opening;
+
+/** Conversation en texte brut, destinée au répondant. */
+export const buildTranscript = (state: SimulationState): ChatTranscriptLine[] =>
+    state.chat.flatMap((entry): ChatTranscriptLine[] => (entry.kind === "say" ? [{ speakerId: entry.speakerId, text: entry.text }] : []));
+
+/* ------------------------------------------------------------------ */
+/* Transitions                                                         */
+/* ------------------------------------------------------------------ */
+
+function openEncounter(state: SimulationState, mission: MissionDefinition, encounterId: string): SimulationState {
+    const encounter = getEncounter(mission, encounterId);
+    if (!encounter) return state;
+    const ctx = buildContext(state);
+    const lines = resolveOpening(encounter, ctx);
+    let nextId = state.nextId;
+    const chat: ChatEntry[] = [...state.chat, { id: nextId++, kind: "scene", time: encounter.time, text: encounter.title }];
+    lines.forEach((line) => {
+        chat.push({ id: nextId++, kind: "say", speakerId: line.speakerId, text: line.text, expression: line.expression });
+    });
+
+    const characters = { ...state.characters };
+    Object.keys(characters).forEach((id) => {
+        characters[id] = { ...characters[id], status: "idle" };
+    });
+    const speaker = characters[encounter.characterId];
+    const last = lines[lines.length - 1];
+    if (speaker) {
+        characters[speaker.id] = {
+            ...speaker,
+            status: "speaking",
+            expression: last?.expression ?? "neutral",
+            dialogue: last?.text ?? "",
         };
     }
-    if (done) return { done, availability: { ok: false, reason: "Déjà fait." } };
-    return { done, availability: action.availability ? action.availability(ctx) : { ok: true } };
+
+    return { ...state, encounterId, nextEncounterId: null, chat, characters, nextId, step: "asking", lastDeltas: {}, error: null };
 }
-
-/* ------------------------------------------------------------------ */
-/* Mutations internes (sur un brouillon cloné)                         */
-/* ------------------------------------------------------------------ */
-
-function pushDialogue(draft: SimulationState, lines: DialogueInput[], clock: number) {
-    let lastCharacterId: string | null = null;
-    lines.forEach((line) => {
-        draft.seq += 1;
-        draft.dialogue.push({ ...line, id: draft.seq, clock });
-        const character = draft.characters[line.speakerId];
-        if (character) {
-            character.dialogue = line.text;
-            character.expression = line.expression ?? "neutral";
-            lastCharacterId = character.id;
-        }
-    });
-    if (lastCharacterId) {
-        Object.values(draft.characters).forEach((character) => {
-            character.status = character.id === lastCharacterId ? "speaking" : "idle";
-        });
-    }
-}
-
-function applyEffects(
-    draft: SimulationState,
-    outcome: ActionOutcome,
-    label: string,
-    flagClock: number,
-    lineClock: number,
-): Record<string, number> {
-    const applied: Record<string, number> = {};
-    Object.entries(outcome.deltas ?? {}).forEach(([id, delta]) => {
-        if (!(id in draft.indicators)) return;
-        const before = draft.indicators[id];
-        const after = clamp(before + delta);
-        draft.indicators[id] = after;
-        applied[id] = after - before;
-    });
-    outcome.setFlags?.forEach((flag) => {
-        if (!draft.flags[flag]) {
-            draft.flags[flag] = true;
-            draft.flagTimes[flag] = flagClock;
-        }
-    });
-    outcome.clearFlags?.forEach((flag) => {
-        delete draft.flags[flag];
-        delete draft.flagTimes[flag];
-    });
-    pushDialogue(draft, outcome.dialogue ?? [], lineClock);
-    if (outcome.blocked) draft.blockedCount += 1;
-    if (outcome.decisionId) draft.pendingDecisionId = outcome.decisionId;
-    draft.seq += 1;
-    draft.journal.push({ id: draft.seq, clock: lineClock, label, text: outcome.text, tone: outcome.tone });
-    return applied;
-}
-
-function setResult(draft: SimulationState, end: EndCondition, clock: number) {
-    draft.result = { status: end.status, reason: end.reason };
-    pushDialogue(draft, end.dialogue ?? [], clock);
-    draft.pendingDecisionId = null;
-}
-
-function checkEnd(draft: SimulationState, mission: MissionDefinition) {
-    if (draft.result) return;
-    const end = mission.evaluateEnd(buildContext(draft, mission));
-    if (end) setResult(draft, end, draft.clock);
-}
-
-/** Cumule les deltas appliqués pendant un tour. */
-function sumInto(total: Record<string, number>, applied: Record<string, number>) {
-    Object.entries(applied).forEach(([id, value]) => {
-        total[id] = (total[id] ?? 0) + value;
-    });
-}
-
-/** Fait passer le temps minute par minute ; s'interrompt si une décision s'ouvre. */
-function advanceTime(
-    draft: SimulationState,
-    mission: MissionDefinition,
-    minutes: number,
-    notices: OutcomeNotice[],
-    totals: Record<string, number>,
-): number {
-    let spent = 0;
-    for (let step = 0; step < minutes; step += 1) {
-        draft.clock += 1;
-        spent += 1;
-
-        for (let guard = 0; guard < 5; guard += 1) {
-            const ctx = buildContext(draft, mission);
-            const due = mission.events.find((event) => !draft.firedEvents.includes(event.id) && event.when(ctx));
-            if (!due) break;
-            draft.firedEvents.push(due.id);
-            const outcome = due.resolve(ctx);
-            const applied = applyEffects(draft, outcome, outcome.title ?? "Événement", draft.clock, draft.clock);
-            notices.push({
-                id: `${due.id}-${draft.seq}`,
-                source: "event",
-                title: outcome.title ?? "Événement",
-                text: outcome.text,
-                tone: outcome.tone,
-            });
-            sumInto(totals, applied);
-        }
-
-        checkEnd(draft, mission);
-        if (draft.pendingDecisionId || draft.result) break;
-    }
-    return spent;
-}
-
-interface CommitMeta {
-    label: string;
-    cost: number;
-    /** Identifiant d'action à marquer comme faite (et dont on garde le finding). */
-    actionId?: string;
-    repeatable?: boolean;
-}
-
-function commit(
-    state: SimulationState,
-    mission: MissionDefinition,
-    outcome: ActionOutcome,
-    meta: CommitMeta,
-): SimulationState {
-    const draft = cloneState(state);
-    const totals: Record<string, number> = {};
-    draft.seq += 1;
-    const turnId = draft.seq;
-    const notices: OutcomeNotice[] = [];
-
-    const cost = outcome.blocked ? 0 : outcome.timeCost ?? meta.cost;
-    const applied = applyEffects(draft, outcome, meta.label, draft.clock + cost, draft.clock);
-    sumInto(totals, applied);
-    notices.push({
-        id: `action-${turnId}`,
-        source: "action",
-        title: outcome.title ?? meta.label,
-        text: outcome.text,
-        tone: outcome.tone,
-    });
-
-    if (!outcome.blocked && meta.actionId && !meta.repeatable) draft.doneActions.push(meta.actionId);
-    if (!outcome.blocked && meta.actionId && outcome.finding) draft.findings[meta.actionId] = outcome.finding;
-
-    if (outcome.end) setResult(draft, outcome.end, draft.clock);
-    checkEnd(draft, mission);
-
-    let spent = 0;
-    if (draft.result) {
-        draft.clock += cost;
-        spent = cost;
-    } else if (cost > 0 && !draft.pendingDecisionId) {
-        spent = advanceTime(draft, mission, cost, notices, totals);
-    }
-
-    draft.lastTurn = { id: turnId, notices, deltas: totals, minutes: spent };
-    return draft;
-}
-
-/* ------------------------------------------------------------------ */
-/* API publique                                                        */
-/* ------------------------------------------------------------------ */
 
 export function startMission(state: SimulationState, mission: MissionDefinition): SimulationState {
     if (state.phase !== "briefing") return state;
-    const draft = cloneState(state);
-    draft.phase = "playing";
-    pushDialogue(draft, mission.openingDialogue, draft.clock);
-    return draft;
+    const firstId = pickNextEncounter(state, mission);
+    if (!firstId) return state;
+    return openEncounter({ ...state, phase: "playing" }, mission, firstId);
 }
 
-export function selectTool(state: SimulationState, toolId: string): SimulationState {
-    return state.activeToolId === toolId ? state : { ...state, activeToolId: toolId };
+/** Le joueur a répondu : sa réplique s'affiche, le personnage « réfléchit ». */
+export function beginReply(state: SimulationState, mission: MissionDefinition, reply: PlayerReply): SimulationState {
+    if (state.phase !== "playing" || state.step !== "asking") return state;
+    const encounter = getEncounter(mission, state.encounterId);
+    if (!encounter) return state;
+    const text = reply.kind === "choice" ? reply.label : reply.text.trim();
+    if (!text) return state;
+
+    const characters = { ...state.characters };
+    const speaker = characters[encounter.characterId];
+    if (speaker) characters[speaker.id] = { ...speaker, status: "listening", expression: "thinking" };
+
+    return {
+        ...state,
+        step: "thinking",
+        error: null,
+        characters,
+        chat: [...state.chat, { id: state.nextId, kind: "say", speakerId: "player", text }],
+        nextId: state.nextId + 1,
+    };
 }
 
-export function performAction(state: SimulationState, mission: MissionDefinition, actionId: string): SimulationState {
-    if (state.phase !== "playing") return state;
-    const action = mission.actions.find((candidate) => candidate.id === actionId);
-    if (!action) return state;
-    if (!getActionStatus(state, mission, action).availability.ok) return state;
+/** Le répondant n'a pas pu répondre : on retire la réplique du joueur et on lui laisse réessayer. */
+export function cancelReply(state: SimulationState, mission: MissionDefinition, error: string): SimulationState {
+    if (state.step !== "thinking") return state;
+    const chat = [...state.chat];
+    for (let i = chat.length - 1; i >= 0; i -= 1) {
+        const entry = chat[i];
+        if (entry.kind === "say" && entry.speakerId === "player") {
+            chat.splice(i, 1);
+            break;
+        }
+    }
+    const encounter = getEncounter(mission, state.encounterId);
+    const characters = { ...state.characters };
+    const speaker = encounter ? characters[encounter.characterId] : undefined;
+    if (speaker) characters[speaker.id] = { ...speaker, status: "speaking" };
+    return { ...state, step: "asking", chat, characters, error };
+}
 
-    // FUTURE INTEGRATION BACKEND : transmettre l'action du joueur à la session.
-    // FUTURE INTEGRATION IA : laisser l'agent générer la réaction contextualisée.
-    const outcome = action.resolve(buildContext(state, mission));
-    return commit(state, mission, outcome, {
-        label: action.label,
-        cost: action.cost,
-        actionId: action.id,
-        repeatable: action.once === false,
+/** Applique le résultat décidé par le répondant : réaction, conséquences, jauges, drapeaux, objectifs. */
+export function applyOutcome(state: SimulationState, mission: MissionDefinition, outcome: Outcome, reply: PlayerReply): SimulationState {
+    if (state.phase !== "playing" || state.step !== "thinking") return state;
+    const encounter = getEncounter(mission, state.encounterId);
+    if (!encounter) return state;
+
+    const before = buildContext(state);
+    let nextId = state.nextId;
+    const chat: ChatEntry[] = [...state.chat];
+
+    outcome.reaction.forEach((line) => {
+        chat.push({ id: nextId++, kind: "say", speakerId: encounter.characterId, text: line.text, expression: line.expression });
     });
-}
 
-export function chooseDecision(
-    state: SimulationState,
-    mission: MissionDefinition,
-    optionId: string,
-): SimulationState {
-    if (state.phase !== "playing" || !state.pendingDecisionId || state.result) return state;
-    const decision = mission.decisions.find((candidate) => candidate.id === state.pendingDecisionId);
-    const option = decision?.options.find((candidate) => candidate.id === optionId);
-    if (!decision || !option) return state;
+    const indicators = { ...state.indicators };
+    const lastDeltas: Record<string, number> = {};
+    Object.entries(outcome.deltas ?? {}).forEach(([id, delta]) => {
+        if (!(id in indicators) || delta === 0) return;
+        const next = clamp(indicators[id] + delta);
+        lastDeltas[id] = next - indicators[id];
+        indicators[id] = next;
+    });
 
-    // FUTURE INTEGRATION BACKEND : transmettre le choix du joueur à la session.
-    const outcome = option.resolve(buildContext(state, mission));
-    const cleared: SimulationState = { ...state, pendingDecisionId: null };
-    return commit(cleared, mission, outcome, { label: `${decision.title} — ${option.label}`, cost: option.cost ?? 0 });
-}
+    const deltaList = Object.entries(lastDeltas)
+        .filter(([, delta]) => delta !== 0)
+        .map(([id, delta]) => ({ label: mission.indicators.find((indicator) => indicator.id === id)?.label ?? id, delta }));
+    chat.push({ id: nextId++, kind: "consequence", ...outcome.consequence, deltas: deltaList });
 
-export function showDebrief(state: SimulationState): SimulationState {
-    return state.result ? { ...state, phase: "debrief" } : state;
-}
+    const flags = Array.from(new Set([...state.flags, ...(outcome.setFlags ?? [])]));
+    const replyLabel = reply.kind === "choice" ? reply.label : reply.text.trim();
+    const choices = { ...state.choices, [encounter.id]: reply.kind === "choice" ? reply.optionId : "free" };
 
-/* ------------------------------------------------------------------ */
-/* Vues dérivées pour l'interface                                      */
-/* ------------------------------------------------------------------ */
-
-const levelFor = (percent: number): Tone => (percent >= 60 ? "good" : percent >= 35 ? "warn" : "bad");
-
-export function getIndicatorViews(state: SimulationState, mission: MissionDefinition): IndicatorView[] {
-    const deltas = state.lastTurn?.deltas ?? {};
-
-    const gauges: IndicatorView[] = mission.indicators.map((definition) => {
-        const value = Math.round(state.indicators[definition.id]);
-        const delta = Math.round(deltas[definition.id] ?? 0);
-        return {
-            id: definition.id,
-            label: definition.label,
-            meaning: definition.meaning,
-            icon: definition.icon,
-            display: `${value}%`,
-            percent: value,
-            level: levelFor(value),
-            deltaLabel: delta === 0 ? undefined : `${delta > 0 ? "+" : "−"}${Math.abs(delta)}`,
-            deltaTone: delta === 0 ? undefined : delta > 0 ? "good" : "bad",
+    const characters = { ...state.characters };
+    const speaker = characters[encounter.characterId];
+    const lastLine = outcome.reaction[outcome.reaction.length - 1];
+    if (speaker) {
+        characters[speaker.id] = {
+            ...speaker,
+            status: "speaking",
+            expression: lastLine?.expression ?? "neutral",
+            dialogue: lastLine?.text ?? speaker.dialogue,
         };
-    });
+    }
 
-    const total = mission.deadlineClock - mission.startClock;
-    const remaining = Math.max(0, mission.deadlineClock - state.clock);
-    const timePercent = Math.round((remaining / total) * 100);
-    const spent = state.lastTurn?.minutes ?? 0;
-
-    const timeView: IndicatorView = {
-        id: "time",
-        label: "Temps",
-        meaning: "Temps restant avant la fin de la fenêtre d'astreinte. Chaque action en consomme.",
-        icon: "clock",
-        display: formatDuration(remaining),
-        percent: timePercent,
-        level: timePercent > 40 ? "good" : timePercent > 15 ? "warn" : "bad",
-        deltaLabel: spent > 0 ? `−${spent} min` : undefined,
-        deltaTone: spent > 0 ? "warn" : undefined,
+    let next: SimulationState = {
+        ...state,
+        step: "reacted",
+        chat,
+        indicators,
+        lastDeltas,
+        flags,
+        choices,
+        characters,
+        nextId,
+        error: null,
+        journal: [
+            ...state.journal,
+            { id: state.journal.length + 1, time: encounter.time, label: encounter.title, text: `« ${replyLabel} » — ${outcome.consequence.text}`, tone: outcome.consequence.tone },
+        ],
     };
 
-    return [...gauges, timeView];
+    // Objectifs tout juste atteints
+    const after = buildContext(next);
+    mission.objectives.forEach((objective) => {
+        if (!objective.isComplete(before) && objective.isComplete(after)) {
+            next = { ...next, chat: [...next.chat, { id: next.nextId, kind: "objective", text: objective.label }], nextId: next.nextId + 1 };
+        }
+    });
+
+    // Jauge critique à zéro : fin immédiate
+    const critical = mission.indicators.some((indicator) => indicator.critical && next.indicators[indicator.id] <= 0);
+    if (critical) {
+        return { ...next, nextEncounterId: null, result: mission.evaluateEnd(buildContext(next), "critical") };
+    }
+    return { ...next, nextEncounterId: pickNextEncounter(next, mission, outcome.next) };
+}
+
+/** « Continuer » : ouvre la rencontre suivante, ou passe au bilan. */
+export function advance(state: SimulationState, mission: MissionDefinition): SimulationState {
+    if (state.phase !== "playing" || state.step !== "reacted") return state;
+    if (state.result || !state.nextEncounterId) {
+        const result = state.result ?? mission.evaluateEnd(buildContext(state), "completed");
+        return { ...state, phase: "debrief", result };
+    }
+    return openEncounter(state, mission, state.nextEncounterId);
+}
+
+/* ------------------------------------------------------------------ */
+/* Lecture                                                             */
+/* ------------------------------------------------------------------ */
+
+const levelOf = (value: number): Tone => (value >= 60 ? "good" : value >= 30 ? "warn" : "bad");
+const signed = (delta: number) => `${delta > 0 ? "+" : "−"}${Math.abs(delta)}`;
+
+export function getIndicatorViews(state: SimulationState, mission: MissionDefinition): IndicatorView[] {
+    return mission.indicators.map((indicator) => {
+        const value = state.indicators[indicator.id] ?? indicator.initial;
+        const delta = state.lastDeltas[indicator.id] ?? 0;
+        return {
+            id: indicator.id,
+            label: indicator.label,
+            meaning: indicator.meaning,
+            icon: indicator.icon,
+            value,
+            percent: value,
+            display: `${value}`,
+            level: levelOf(value),
+            deltaLabel: delta !== 0 ? signed(delta) : undefined,
+            deltaTone: delta > 0 ? "good" : delta < 0 ? "bad" : undefined,
+        };
+    });
 }
 
 export function getProgress(state: SimulationState, mission: MissionDefinition) {
-    const ctx = buildContext(state, mission);
-    const objectives = mission.objectives.map((objective) => ({
-        id: objective.id,
-        label: objective.label,
-        done: objective.isComplete(ctx),
-    }));
-    return { objectives, done: objectives.filter((o) => o.done).length, total: objectives.length };
+    const ctx = buildContext(state);
+    const objectives = mission.objectives.map((objective) => ({ id: objective.id, label: objective.label, done: objective.isComplete(ctx) }));
+    return { done: objectives.filter((objective) => objective.done).length, total: objectives.length, objectives };
 }
 
-export function getMissionInfo(state: SimulationState, mission: MissionDefinition) {
-    const ctx = buildContext(state, mission);
-    const visible = mission.infoItems.filter((item) => !item.revealWhen || item.revealWhen(ctx));
-    return { visible, hiddenCount: mission.infoItems.length - visible.length };
-}
-
-export function getDebrief(state: SimulationState, mission: MissionDefinition) {
+export function getDebrief(state: SimulationState, mission: MissionDefinition): { result: NonNullable<SimulationState["result"]>; content: DebriefContent; indicators: IndicatorView[]; journal: SimulationState["journal"] } | null {
     if (!state.result) return null;
-    const ctx = buildContext(state, mission);
-    const trackedVerbs = ["examine", "verify", "consult"];
-    const missed = mission.actions
-        .filter((action) => action.tracked ?? trackedVerbs.includes(action.verb))
-        .filter((action) => !state.doneActions.includes(action.id))
-        .map((action) => action.label);
-
     return {
         result: state.result,
-        content: mission.debrief({ ctx, result: state.result, blockedAttempts: state.blockedCount, missed }),
-        indicators: getIndicatorViews(state, mission),
+        content: mission.debrief({ result: state.result, ctx: buildContext(state), journal: state.journal }),
+        indicators: getIndicatorViews({ ...state, lastDeltas: {} }, mission),
         journal: state.journal,
-        missed,
     };
 }
+
+/** Heure affichée en haut : celle de la rencontre en cours. */
+export const getCurrentTime = (state: SimulationState, mission: MissionDefinition): string =>
+    getEncounter(mission, state.encounterId)?.time ?? "";

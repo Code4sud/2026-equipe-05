@@ -2,53 +2,57 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { FC } from "react";
 import { offshoreTurbineMission } from "./missions/offshoreTurbineMission";
 import { useSimulation } from "./useSimulation";
-import { buildContext, getActionStatus, getDebrief, getIndicatorViews, getMissionInfo, getProgress } from "./simulation";
+import { getCurrentTime, getDebrief, getEncounter, getIndicatorViews, getProgress } from "./simulation";
 import { TopBar } from "./TopBar";
 import { BriefingScreen } from "./BriefingScreen";
 import { DebriefScreen } from "./DebriefScreen";
 import { MissionPanel } from "./MissionPanel";
 import { StatusIndicators } from "./StatusIndicators";
-import { CallStage, CharacterGroup } from "./CharacterDisplay";
-import { OutcomeBanner } from "./OutcomeBanner";
-import { ToolPanel } from "./ToolPanel";
-import { CommandsPanel, ConditionsPanel } from "./ActionPanel";
-import { DialoguePanel } from "./DialoguePanel";
-import { DecisionOverlay } from "./DecisionOverlay";
+import { CallHeader } from "./CharacterDisplay";
+import { ChatLog, ReplyPicker } from "./ChatPanel";
 import { GuideProvider, GuideZone, hasSeenGuide, markGuideSeen } from "./guide";
 import { VoiceBox } from "./VoiceBox";
 import { DESK } from "./ui";
+import type { Responder } from "./types";
 
 /**
  * Expérience de jeu principale (pré-alpha, 100 % locale).
  *
- * Boucle : prise de poste → mission → observation → interactions → décision
- * → conséquences → progression → bilan. Toute la simulation est calculée dans
- * React à partir d'une `MissionDefinition` ; rien ne dépend du backend.
+ * Boucle « à la Papers, Please » : quelqu'un vient te parler selon le contexte
+ * (rencontre) → tu choisis ta réponse → le personnage réagit et les conséquences
+ * s'appliquent (jauges, objectifs) → la personne suivante dépend de ce que tu as
+ * fait → bilan.
  *
- * Lecture de l'écran : à gauche, ce qui se passe (qui parle, ce que tu viens de
- * provoquer, ton poste de travail) ; à droite, ce que tu dois faire (mission,
- * conditions à réunir, commandes). Une décision s'ouvre en fiche au centre.
+ * Qui décide de la réaction et des conséquences ? Un « répondant » (`Responder`).
+ * Aujourd'hui : `scriptedResponder`, scénario écrit à la main (PAS une IA).
  *
  * Visite guidée : à la première prise de poste, la boîte vocale du commandement
- * présente chaque rubrique à tour de rôle (les autres sont floutées) et attend
- * que le joueur confirme. Elle se relance depuis la barre du haut.
+ * présente chaque zone à tour de rôle (les autres sont floutées) et attend que
+ * le joueur confirme. Elle se relance depuis la barre du haut.
+ *
+ * FUTURE INTEGRATION IA :
+ * passer à `useSimulation` un `Responder` branché sur l'agent (réaction du
+ * personnage, conséquences, jauges) ; la saisie libre s'active alors toute seule.
  *
  * FUTURE INTEGRATION BACKEND :
  * remplacer `offshoreTurbineMission` par le scénario de la session et
- * transmettre actions et décisions du joueur à cette session.
- *
- * FUTURE INTEGRATION IA :
- * alimenter `state.characters` et `state.dialogue` avec les personnages et
- * répliques générés par les agents.
+ * transmettre les réponses du joueur à cette session.
  */
 
 interface GameplayPrototypeProps {
     onQuit?: () => void;
+    /**
+     * Qui décide des réactions et des conséquences. Par défaut : le scénario local.
+     * FUTURE INTEGRATION IA : passer ici le répondant branché sur l'agent.
+     */
+    responder?: Responder;
+    /** Durée minimale de « l'écriture » du personnage, en ms (rythme de conversation). */
+    thinkingMs?: number;
 }
 
-export const GameplayPrototype: FC<GameplayPrototypeProps> = ({ onQuit }) => {
+export const GameplayPrototype: FC<GameplayPrototypeProps> = ({ onQuit, responder, thinkingMs }) => {
     const mission = offshoreTurbineMission;
-    const { state, start, perform, decide, selectTool, openDebrief, restart } = useSimulation(mission);
+    const { state, supportsFreeText, start, reply, next, restart } = useSimulation(mission, { responder, thinkingMs });
 
     const handleQuit = onQuit ?? (() => window.history.back());
 
@@ -66,13 +70,10 @@ export const GameplayPrototype: FC<GameplayPrototypeProps> = ({ onQuit }) => {
         previousPhase.current = state.phase;
     }, [state.phase, guideSteps.length, mission.id]);
 
-    const closeGuide = useCallback(
-        () => {
-            markGuideSeen(mission.id);
-            setGuideIndex(null);
-        },
-        [mission.id],
-    );
+    const closeGuide = useCallback(() => {
+        markGuideSeen(mission.id);
+        setGuideIndex(null);
+    }, [mission.id]);
     const nextGuide = useCallback(() => {
         setGuideIndex((current) => {
             if (current === null) return current;
@@ -90,30 +91,23 @@ export const GameplayPrototype: FC<GameplayPrototypeProps> = ({ onQuit }) => {
         [guideActive, guideIndex, guideSteps],
     );
 
-    const characters = useMemo(() => mission.characters.map((c) => state.characters[c.id]), [mission, state.characters]);
     const progress = useMemo(() => getProgress(state, mission), [state, mission]);
+    const characters = useMemo(() => mission.characters.map((c) => state.characters[c.id]), [mission, state.characters]);
+    const encounter = getEncounter(mission, state.encounterId);
+    const speaker = encounter ? state.characters[encounter.characterId] : undefined;
 
-    const status = useMemo(() => {
-        const entries: Record<string, ReturnType<typeof getActionStatus>> = {};
-        mission.actions.forEach((action) => {
-            entries[action.id] = getActionStatus(state, mission, action);
-        });
-        return entries;
-    }, [state, mission]);
-
-    const pendingDecision = state.pendingDecisionId
-        ? (mission.decisions.find((decision) => decision.id === state.pendingDecisionId) ?? null)
-        : null;
+    const chooseReply = useCallback((optionId: string, label: string) => void reply({ kind: "choice", optionId, label }), [reply]);
+    const freeReply = useCallback((text: string) => void reply({ kind: "free", text }), [reply]);
 
     const header = (
         <TopBar
             missionTitle={mission.title}
-            clock={state.clock}
-            finished={!!state.result}
+            timeLabel={getCurrentTime(state, mission)}
+            finished={state.phase === "debrief"}
             progress={progress}
             onQuit={handleQuit}
             onRestart={restart}
-            onGuide={state.phase === "playing" && !pendingDecision && guideSteps.length > 0 ? () => setGuideIndex(0) : undefined}
+            onGuide={state.phase === "playing" && guideSteps.length > 0 ? () => setGuideIndex(0) : undefined}
         />
     );
 
@@ -121,13 +115,7 @@ export const GameplayPrototype: FC<GameplayPrototypeProps> = ({ onQuit }) => {
         return (
             <div className={`min-h-screen ${DESK}`}>
                 {header}
-                <BriefingScreen
-                    briefing={mission.briefing}
-                    role={mission.role}
-                    location={mission.location}
-                    characters={characters}
-                    onStart={start}
-                />
+                <BriefingScreen briefing={mission.briefing} role={mission.role} location={mission.location} characters={characters} onStart={start} />
             </div>
         );
     }
@@ -151,84 +139,56 @@ export const GameplayPrototype: FC<GameplayPrototypeProps> = ({ onQuit }) => {
         }
     }
 
-    const ctx = buildContext(state, mission);
-    const info = getMissionInfo(state, mission);
-    const workspaceTools = mission.tools.filter((tool) => tool.placement === "workspace");
-    const commandActions = mission.actions.filter((action) =>
-        mission.tools.some((tool) => tool.id === action.toolId && tool.placement === "actions"),
-    );
+    const objectiveLabel = progress.objectives.find((objective) => objective.id === encounter?.objectiveId)?.label;
 
     return (
         <GuideProvider value={guideState}>
             <div className={`min-h-screen ${DESK} ${guideActive ? "pb-80 md:pb-56" : ""}`}>
                 {header}
 
-                <div className="mx-auto max-w-[1280px] space-y-5 p-4 md:p-6">
+                <div className="mx-auto max-w-[1100px] space-y-5 p-4 md:p-6">
                     <GuideZone id="status" label="tes jauges">
                         <StatusIndicators indicators={getIndicatorViews(state, mission)} />
                     </GuideZone>
 
-                    <div className="grid grid-cols-1 gap-5 lg:grid-cols-[minmax(0,1fr)_370px]">
-                        {/* GAUCHE : ce qui se passe */}
+                    <div className="grid grid-cols-1 gap-5 lg:grid-cols-[minmax(0,1fr)_320px]">
+                        {/* GAUCHE : la conversation */}
                         <div className="min-w-0 space-y-5">
-                            <GuideZone id="call" label="ton interlocuteur">
-                                <CallStage characters={characters} />
-                            </GuideZone>
-                            <GuideZone id="outcome" label="les conséquences">
-                                <OutcomeBanner turn={state.lastTurn} />
-                            </GuideZone>
-                            <GuideZone id="tools" label="ton poste de travail">
-                                <ToolPanel
-                                    tools={workspaceTools}
-                                    activeToolId={state.activeToolId}
-                                    onSelectTool={selectTool}
-                                    actions={mission.actions}
+                            {speaker && encounter && (
+                                <GuideZone id="call" label="qui te parle">
+                                    <CallHeader character={speaker} title={encounter.title} time={encounter.time} objectiveLabel={objectiveLabel} />
+                                </GuideZone>
+                            )}
+                            <GuideZone id="chat" label="la conversation">
+                                <ChatLog
+                                    entries={state.chat}
                                     characters={state.characters}
-                                    readouts={mission.readouts(ctx)}
-                                    findings={state.findings}
-                                    status={status}
-                                    onPerform={perform}
+                                    typing={state.step === "thinking" ? speaker : null}
+                                />
+                            </GuideZone>
+                            <GuideZone id="replies" label="tes réponses">
+                                <ReplyPicker
+                                    step={state.step}
+                                    speakerName={speaker?.name ?? "Ton interlocuteur"}
+                                    replies={encounter?.replies.map(({ id, label }) => ({ id, label })) ?? []}
+                                    supportsFreeText={supportsFreeText}
+                                    error={state.error}
+                                    hasNext={!state.result && state.nextEncounterId !== null}
+                                    onChoose={chooseReply}
+                                    onFree={freeReply}
+                                    onNext={next}
                                 />
                             </GuideZone>
                         </div>
 
-                        {/* DROITE : ce que tu dois faire */}
-                        <aside className="space-y-5">
-                            <GuideZone id="mission" label="ton ordre de mission">
-                                <MissionPanel
-                                    title={mission.title}
-                                    location={mission.location}
-                                    objectives={progress.objectives}
-                                    info={info.visible}
-                                    hiddenCount={info.hiddenCount}
-                                />
-                            </GuideZone>
-                            <GuideZone id="conditions" label="les conditions à réunir">
-                                <ConditionsPanel readiness={mission.readiness(ctx)} />
-                            </GuideZone>
-                            <GuideZone id="commands" label="tes commandes">
-                                <CommandsPanel
-                                    actions={commandActions}
-                                    status={status}
-                                    result={state.result}
-                                    onPerform={perform}
-                                    onOpenDebrief={openDebrief}
-                                />
-                            </GuideZone>
-                            <GuideZone id="history" label="l'historique">
-                                <DialoguePanel lines={state.dialogue} characters={state.characters} />
+                        {/* DROITE : la mission */}
+                        <aside>
+                            <GuideZone id="mission" label="ta mission">
+                                <MissionPanel title={mission.title} role={mission.role} location={mission.location} objectives={progress.objectives} />
                             </GuideZone>
                         </aside>
                     </div>
                 </div>
-
-                {pendingDecision && (
-                    <DecisionOverlay
-                        decision={pendingDecision}
-                        speakerName={pendingDecision.characterId ? state.characters[pendingDecision.characterId]?.name : undefined}
-                        onChoose={decide}
-                    />
-                )}
 
                 {guideActive && guideIndex !== null && (
                     <VoiceBox steps={guideSteps} index={guideIndex} onNext={nextGuide} onPrev={prevGuide} onClose={closeGuide} />

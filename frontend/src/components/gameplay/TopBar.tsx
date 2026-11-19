@@ -1,4 +1,4 @@
-import { ArrowLeft, Clock, RotateCcw } from "lucide-react";
+import { ArrowLeft, Clock, Radio, RotateCcw } from "lucide-react";
 import { formatClock } from "./simulation";
 
 interface TopBarProps {
@@ -8,10 +8,12 @@ interface TopBarProps {
     progress: { done: number; total: number };
     onQuit: () => void;
     onRestart: () => void;
+    /** Relance la visite guidée vocale (absent = bouton masqué). */
+    onGuide?: () => void;
 }
 
 /** Barre supérieure : identité, heure, progression, navigation. */
-export const TopBar = ({ missionTitle, clock, finished, progress, onQuit, onRestart }: TopBarProps) => (
+export const TopBar = ({ missionTitle, clock, finished, progress, onQuit, onRestart, onGuide }: TopBarProps) => (
     <header className="border-b border-black/40 bg-[#14171a] px-4 py-3 text-[#e8e2d0] md:px-8">
         <div className="mx-auto flex max-w-[1280px] flex-wrap items-center justify-between gap-x-6 gap-y-2">
             <div className="flex items-baseline gap-3">
@@ -31,6 +33,15 @@ export const TopBar = ({ missionTitle, clock, finished, progress, onQuit, onRest
             </div>
 
             <div className="flex items-center gap-4 text-sm text-[#a39d8a]">
+                {onGuide && (
+                    <button
+                        type="button"
+                        onClick={onGuide}
+                        className="flex items-center gap-1.5 font-semibold text-[#e0b252] hover:text-[#f0c466] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#e0b252]"
+                    >
+                        <Radio size={14} /> Revoir le guide
+                    </button>
+                )}
                 <button
                     type="button"
                     onClick={onRestart}

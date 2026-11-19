@@ -22,6 +22,7 @@ import type {
     EventDefinition,
     Expression,
     GameContext,
+    GuideStep,
     MissionDefinition,
 } from "../types";
 
@@ -855,6 +856,95 @@ const events: EventDefinition[] = [
 /* Mission                                                             */
 /* ------------------------------------------------------------------ */
 
+/* ------------------------------------------------------------------ */
+/* Visite guidée vocale (textes écrits à la main, pas un agent IA)      */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Ton « commandant » : phrases courtes, ordres à l'impératif, une idée par
+ * étape. Les interlocuteurs sont désignés par leur rôle.
+ */
+const guide: GuideStep[] = [
+    {
+        id: "welcome",
+        targetId: null,
+        title: "Garde à vous, opérateur !",
+        speech:
+            "Garde à vous, opérateur ! Ici le commandement. Tu prends l'astreinte sur le parc, et je te briefe tout de suite. Écoute bien ! Je vais te présenter ton écran, une rubrique à la fois. La rubrique dont je parle reste nette, toutes les autres sont floutées. Quand tu as compris, tu appuies sur Entrée. Pas besoin de tout lire : écoute-moi, et suis le cadre doré. En avant !",
+    },
+    {
+        id: "mission",
+        targetId: "mission",
+        title: "Ton ordre de mission",
+        where: "Colonne de droite, tout en haut",
+        speech:
+            "Première rubrique : ton ordre de mission ! C'est ici que tout commence. Une alarme de vibrations s'est déclenchée sur l'éolienne E-4, en pleine mer. Ton rôle : technicien de maintenance d'astreinte. Tu as quatre objectifs, dans l'ordre. Un : comprendre d'où vient l'alerte. Deux : mettre la machine en sécurité. Trois : décider quand envoyer l'équipe. Quatre : rendre compte à ton responsable. Chaque objectif accompli se coche tout seul. Et tout doit être bouclé avant dix heures trente !",
+    },
+    {
+        id: "status",
+        targetId: "status",
+        title: "Tes jauges",
+        where: "Bandeau en haut de l'écran",
+        speech:
+            "Deuxième rubrique : tes jauges ! Elles sont en haut, et elles ne mentent jamais. Sécurité : les personnes et la machine sont-elles protégées ? Diagnostic : as-tu vraiment compris le problème ? Confiance : ton responsable et l'équipe croient-ils en toi ? Chaque décision les fait bouger, en bien ou en mal. Garde un œil dessus en permanence. Et surveille l'heure, en haut à droite : chaque vérification coûte du temps !",
+    },
+    {
+        id: "call",
+        targetId: "call",
+        title: "Ton interlocuteur",
+        where: "Colonne de gauche, en haut",
+        speech:
+            "Troisième rubrique : ton interlocuteur ! C'est la personne qui te parle en ce moment. Son portrait, son rôle, et ce qu'elle te dit. Ton responsable d'exploitation te donne le cap. Le prévisionniste météo marine et le chef d'équipe de maintenance sont joignables, eux aussi. Lis bien ce qu'ils disent : leurs paroles sont des indices !",
+    },
+    {
+        id: "outcome",
+        targetId: "outcome",
+        title: "Les conséquences",
+        where: "Colonne de gauche, sous ton interlocuteur",
+        speech:
+            "Quatrième rubrique : les conséquences ! Chaque fois que tu agis, le résultat s'affiche ici. Ce que tu viens de découvrir, ce que ça a coûté en minutes, et les événements qui surviennent pendant ce temps. Un appel, une alarme, un changement de météo : tout tombe ici. Ne le rate jamais !",
+    },
+    {
+        id: "tools",
+        targetId: "tools",
+        title: "Ton poste de travail",
+        where: "Colonne de gauche, en bas, avec ses onglets",
+        speech:
+            "Cinquième rubrique : ton poste de travail ! C'est ici que tu enquêtes. Trois onglets, comme des dossiers. Supervision : les mesures de la machine, en direct. Documents : les procédures de sécurité. Radio : tu appelles la météo, l'équipe, ton responsable. Rien n'est donné d'avance : à toi d'aller chercher l'information ! Chaque recherche prend du temps, alors choisis bien.",
+    },
+    {
+        id: "conditions",
+        targetId: "conditions",
+        title: "Les conditions à réunir",
+        where: "Colonne de droite, sous l'ordre de mission",
+        speech:
+            "Sixième rubrique : les conditions d'intervention ! C'est ta liste de contrôle avant d'envoyer l'équipe en mer. Une case verte, c'est validé. Une case rouge, pas encore. Un rond gris, tu n'as pas encore l'information. Tant que tout n'est pas vert, personne ne monte sur la machine. La sécurité, ça ne se négocie pas !",
+    },
+    {
+        id: "commands",
+        targetId: "commands",
+        title: "Tes commandes",
+        where: "Colonne de droite, sous les conditions",
+        speech:
+            "Septième rubrique : tes commandes ! Ce sont les ordres que tu peux donner : poser ton diagnostic, arrêter la machine, la consigner, envoyer l'équipe, clôturer. Un cadenas, c'est que l'ordre est bloqué, et la raison est écrite juste dessous. Attention : respecte l'ordre des opérations. Arrêt, puis consignation, puis accès. L'ordre, c'est la sécurité !",
+    },
+    {
+        id: "history",
+        targetId: "history",
+        title: "L'historique",
+        where: "Colonne de droite, tout en bas",
+        speech:
+            "Huitième et dernière rubrique : l'historique ! Tous les échanges y sont gardés. Si tu as raté une réplique, tu l'ouvres et tu la relis. Rien ne se perd.",
+    },
+    {
+        id: "final",
+        targetId: "all",
+        title: "À toi de jouer !",
+        speech:
+            "Voilà, opérateur, tu as tout vu. Résumé : observe, enquête, décide, assume ! Quand une décision importante se présente, une fiche s'ouvre au centre de l'écran. Prends ton temps pour la lire. Si tu veux m'écouter de nouveau, le bouton « Revoir le guide » est en haut à droite. Maintenant, au travail. Bonne chance !",
+    },
+];
+
 export const offshoreTurbineMission: MissionDefinition = {
     id: "offshore-gearbox-alert",
     title: "Alerte multiplicateur · E-4",
@@ -865,6 +955,8 @@ export const offshoreTurbineMission: MissionDefinition = {
         "Une alarme de vibrations est active sur le multiplicateur de l'éolienne E-4. Tu dois comprendre ce qui se passe, protéger les personnes et la machine, puis décider si et quand envoyer une équipe en mer.",
     startClock: START,
     deadlineClock: DEADLINE,
+
+    guide,
 
     briefing: {
         eyebrow: "PRISE DE POSTE · 06:40",

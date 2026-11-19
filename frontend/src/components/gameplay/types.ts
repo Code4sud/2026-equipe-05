@@ -254,6 +254,30 @@ export interface DebriefInput {
   missed: string[];
 }
 
+/**
+ * Étape de la visite guidée vocale. Chaque étape met une zone de l'écran en
+ * lumière (les autres sont floutées) pendant que la « boîte vocale » parle.
+ *
+ * `targetId` : identifiant d'une `GuideZone`.
+ *   - une zone connue → seule cette zone reste nette ;
+ *   - `null`          → tout est flouté (accueil) ;
+ *   - `"all"`         → tout est net (conclusion).
+ *
+ * `speech` est un texte écrit à la main (aucun agent IA). Il est lu à voix
+ * haute par la synthèse vocale du navigateur et affiché en sous-titres.
+ *
+ * FUTURE INTEGRATION IA : `speech` pourrait venir du scénario de la session
+ * (voire d'un agent « commandant »), et la voix d'un service de synthèse.
+ */
+export interface GuideStep {
+  id: string;
+  targetId: string | null;
+  title: string;
+  /** Où regarder, en une courte phrase (« Colonne de droite, en haut »). */
+  where?: string;
+  speech: string;
+}
+
 export interface MissionDefinition {
   id: string;
   title: string;
@@ -264,6 +288,8 @@ export interface MissionDefinition {
   startClock: number;
   deadlineClock: number;
   briefing: BriefingContent;
+  /** Visite guidée vocale de l'écran de jeu (optionnelle). */
+  guide?: GuideStep[];
   indicators: IndicatorDefinition[];
   characters: Character[];
   openingDialogue: DialogueInput[];

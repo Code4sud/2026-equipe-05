@@ -129,29 +129,40 @@ class OmniscientAgent:
         messages_prompt += f"- ETUDIANT (dernier message) : {student_message}\n"
 
         if self.client:
+            models_to_try = ["gemini-2.5-flash", "gemini-2.5-flash", "gemini-1.5-flash", "gemini-2.0-flash", "gemini-3.8-flash"]
             for _ in range(2):  # 1 nouvel essai si la réponse est invalide
-                try:
-                    response = self.client.models.generate_content(
-                        model="gemini-2.5-flash",
-                        contents=messages_prompt,
-                        config=types.GenerateContentConfig(
-                            system_instruction=system_prompt,
-                            response_mime_type="application/json",
-                            response_schema=AgentTurnResponse,
-                            temperature=0.7,
-                        ),
-                    )
-                    resp = AgentTurnResponse(**json.loads(response.text))
-                    resp.deltas_jauges = {
-                        k: max(-20, min(20, v))
-                        for k, v in resp.deltas_jauges.items()
-                        if k in ids
-                    }
-                    resp.propositions_suivantes = (
-                        resp.propositions_suivantes + [""] * 3
-                    )[:3]
-                    return resp
-                except Exception as e:
+                for m in models_to_try:
+                    try:
+                        response = self.client.models.generate_content(
+                            model=m,
+                            contents=messages_prompt,
+                            config=types.GenerateContentConfig(
+                                system_instruction=system_prompt,
+                                response_mime_type="application/json",
+                                temperature=0.7,
+                            ),
+                        )
+                        text = response.text.strip()
+                        if text.startswith("```json"):
+                            text = text[7:]
+                        if text.startswith("```"):
+                            text = text[3:]
+                        if text.endswith("```"):
+                            text = text[:-3]
+                        text = text.strip()
+
+                        resp = AgentTurnResponse(**json.loads(text))
+                        resp.deltas_jauges = {
+                            k: max(-20, min(20, v))
+                            for k, v in resp.deltas_jauges.items()
+                            if k in ids
+                        }
+                        resp.propositions_suivantes = (
+                            resp.propositions_suivantes + [""] * 3
+                        )[:3]
+                        return resp
+                    except Exception as e:
+                        continue
                     print(f"Gemini API error: {e}")
 
         return self._simulate_fallback(scenario, gauges_actuelles, student_message)

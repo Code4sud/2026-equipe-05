@@ -12,7 +12,14 @@ import threading
 from scenario_bridge import ensure_compiled, compile_all_missing
 from contextlib import asynccontextmanager
 
-app = FastAPI(title="Agora Roleplay Studio API", version="1.0.0")
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Au démarrage : compilation en arrière-plan des scénarios pas encore compilés
+    threading.Thread(target=compile_all_missing, daemon=True).start()
+    yield
+    # Ici, on pourrait mettre du code d'arrêt si besoin
+
+app = FastAPI(title="Agora Roleplay Studio API", version="1.0.0", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
@@ -24,15 +31,6 @@ app.add_middleware(
 
 from api.compiler_routes import router as compiler_router
 app.include_router(compiler_router)
-
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    # Au démarrage : compilation en arrière-plan des scénarios pas encore compilés
-    threading.Thread(target=compile_all_missing, daemon=True).start()
-    yield
-    # Ici, on pourrait mettre du code d'arrêt si besoin
-
-app = FastAPI(title="Agora Roleplay Studio API", version="1.0.0", lifespan=lifespan)
 
 SCENARIOS_DIR = Path(__file__).parent / "data" / "scenarios"
 SCENARIOS_DIR.mkdir(parents=True, exist_ok=True)

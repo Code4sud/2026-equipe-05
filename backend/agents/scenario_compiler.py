@@ -49,21 +49,40 @@ Voici le formulaire de scénario brut à compiler :
 - Propositions de départ: {form.propositions_depart}
 """
 
-        response = client.models.generate_content(
-            model='gemini-2.5-flash',
-            contents=user_prompt,
-            config=types.GenerateContentConfig(
-                system_instruction=COMPILER_SYSTEM_PROMPT,
-                response_mime_type="application/json",
-                response_schema=CompiledAgent2Config,
-                temperature=0.3,
-            ),
-        )
-        
-        if response.parsed:
-            return response.parsed
-        elif response.text:
-            data = json.loads(response.text)
+        models_to_try = ['gemini-2.5-flash', 'gemini-2.5-flash', 'gemini-1.5-flash', 'gemini-2.0-flash', 'gemini-3.8-flash']
+        response = None
+        last_err = None
+        for m in models_to_try:
+            try:
+                response = client.models.generate_content(
+                    model=m,
+                    contents=user_prompt,
+                    config=types.GenerateContentConfig(
+                        system_instruction=COMPILER_SYSTEM_PROMPT,
+                        response_mime_type="application/json",
+                        temperature=0.3,
+                    ),
+                )
+                break
+            except Exception as ex:
+                last_err = ex
+                continue
+
+        if not response and last_err:
+            raise last_err
+
+        if response and response.text:
+            # Nettoyage éventuel des blocs de code markdown ```json ... ```
+            text = response.text.strip()
+            if text.startswith("```json"):
+                text = text[7:]
+            if text.startswith("```"):
+                text = text[3:]
+            if text.endswith("```"):
+                text = text[:-3]
+            text = text.strip()
+
+            data = json.loads(text)
             return CompiledAgent2Config(**data)
         else:
             raise ValueError("Réponse vide de l'API Gemini.")

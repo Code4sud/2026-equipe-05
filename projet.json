@@ -20,5 +20,5 @@
   ],
   "demo": "https://code4sud.github.io/2026-equipe-05/",
   "video": "",
-  "captures": []
+  "captures": ["captures/scenarios.png","captures/creation_scenario.png","captures/lancement_scenario.png","captures/jeu_de_role.png","captures/bonne_reponse.png","captures/Mauvaise_reponse.png","captures/bilan_mission.png"]
 }

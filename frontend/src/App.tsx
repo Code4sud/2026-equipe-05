@@ -90,8 +90,12 @@ export function App() {
     return (
       <div className={`min-h-screen ${DESK} flex flex-col items-center justify-center space-y-4`}>
         <Loader2 className="w-10 h-10 animate-spin text-[#e0b252]" />
-        <p className="text-[#a39d8a] text-sm font-medium">Chargement d'Agora Explorer...</p>
-      </div>
+                <p className="text-[#a39d8a] text-sm font-medium">Chargement d'Agora Explorer...</p>
+        {slowWait && (
+          <p className="text-[#e0b252] text-xs font-medium text-center max-w-xs">
+            Le serveur se réveille, 30 secondes de patience…
+          </p>
+        )}
     );
   }
 

@@ -19,6 +19,13 @@ export function App() {
   const [latestTurn, setLatestTurn] = useState<AgentTurnResponse | null>(null);
   const [gameLoading, setGameLoading] = useState<boolean>(false);
 
+    const [slowWait, setSlowWait] = useState(false);
+  useEffect(() => {
+    if (!loadingScenarios && !gameLoading) { setSlowWait(false); return; }
+    const t = setTimeout(() => setSlowWait(true), 3000);
+    return () => clearTimeout(t);
+  }, [loadingScenarios, gameLoading]);
+
   const isGameplayPrototype =
       new URLSearchParams(window.location.search).get("prototype") === "1";
 

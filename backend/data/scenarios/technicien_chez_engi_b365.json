@@ -1,0 +1,36 @@
+{
+  "scenario_id": "technicien_chez_engi_b365",
+  "titre_metier": "Technicien chez Engie",
+  "secteur": "Génie electrique",
+  "contexte": "On doit réparer une panne classique chez une entreprise, l'étudiant doit épauler le technicien sur la panne.",
+  "objectif_etudiant": "L'étudiant a pour objectif d'aider le technicien, des péripéthies occasionels arrive jusu'à la résolution de la panne.",
+  "tours_max": 5,
+  "persona": {
+    "nom_role": "Pierre - Technicien Engie",
+    "ton": "Sympathique mais tendu",
+    "premier_message": "On doit résoudre une panne chez un gros client à nous, une entreprise tech. Quelles sont les prémières étapes quand on intervient sur une panne ?"
+  },
+  "regles_evaluation": "Le technicien est sympathique mais tendu par la situation car des incidents surviennent.",
+  "jauges": [
+    {
+      "id": "securite",
+      "nom": "Sécurité & Conformité",
+      "depart": 80,
+      "seuil_echec": 10,
+      "seuil_victoire": 90
+    },
+    {
+      "id": "avancement",
+      "nom": "Progrès sur la mission",
+      "depart": 0,
+      "seuil_echec": null,
+      "seuil_victoire": 90
+    }
+  ],
+  "propositions_depart": [
+    "Je prends le temps d'analyser la situation avant toute action.",
+    "J'applique immédiatement la procédure standard d'urgence.",
+    "Je consulte l’équipe pour décider de la marche à suivre."
+  ],
+  "system_prompt_agent_2": null
+}

@@ -101,6 +101,12 @@ export function App() {
 
   return (
     <div className={`min-h-screen ${DESK} font-sans selection:bg-[#e0b252] selection:text-[#14171a]`}>
+      {slowWait && (
+        <div className="fixed top-4 left-1/2 -translate-x-1/2 z-50 flex items-center gap-2 rounded-lg border border-[#e0b252] bg-[#14171a] px-4 py-2.5 text-xs font-semibold text-[#e0b252] shadow-lg">
+          <Loader2 className="w-4 h-4 animate-spin" />
+          Le serveur se réveille, 30 secondes de patience…
+        </div>
+      )}
       {error && (
         <div className={`border-b px-6 py-2.5 flex items-center justify-between text-xs font-semibold ${TONE.bad.border} ${TONE.bad.bg} ${TONE.bad.text}`}>
           <span className="flex items-center gap-2">

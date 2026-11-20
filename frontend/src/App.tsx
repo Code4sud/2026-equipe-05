@@ -96,6 +96,7 @@ export function App() {
             Le serveur se réveille, 30 secondes de patience…
           </p>
         )}
+      </div>
     );
   }
 

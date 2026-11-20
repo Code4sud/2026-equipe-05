@@ -1,6 +1,7 @@
 import { Scenario, SessionState, AgentTurnResponse } from './types';
 
-const API_BASE = import.meta.env.VITE_API_URL ?? '/api';
+const RAW_API = (import.meta.env.VITE_API_URL as string | undefined)?.replace(/\/+$/, '');
+const API_BASE = RAW_API ? (RAW_API.endsWith('/api') ? RAW_API : `${RAW_API}/api`) : '/api';
 
 export type ScenarioCreatePayload = Omit<Scenario, 'scenario_id'> & { scenario_id?: string };
 

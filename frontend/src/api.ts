@@ -31,7 +31,7 @@ async function fetchWithTimeout(url: string, options: RequestInit = {}, timeoutM
 }
 
 export async function fetchScenarios(): Promise<Scenario[]> {
-  const res = await fetchWithTimeout(`${API_BASE}/scenarios`);
+  const res = await fetchWithTimeout(`${API_BASE}/scenarios`, {}, 60000);
   if (!res.ok) throw new Error("Erreur lors de la récupération des scénarios.");
   return res.json();
 }
